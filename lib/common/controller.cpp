@@ -191,13 +191,13 @@ void Controller::loop() {
       vels[RGHT] -= yaw;
 
       // fwd
-      vels[LEFT] += fwd;
-      vels[RGHT] += -fwd;
+      vels[LEFT] += -fwd;
+      vels[RGHT] += fwd;
 
       // side
-      vels[BACK] += -side * 1;
-      vels[LEFT] += -side / 8;
-      vels[RGHT] += -side / 8;
+      vels[BACK] += side * 1;
+      vels[LEFT] += side / 8;
+      vels[RGHT] += side / 8;
 
       //now output the drive commands
 
