@@ -188,31 +188,30 @@ void Controller::loop() {
       float yaw = (crsf_.getChannel(4) - 1500) / 500.0; //now (-1 to 1)
       //aux selector: speed
       float speed = (crsf_.getChannel(7) - 1000) / 1000.0; //now (0 to 1)
-      float speedScale = speed * 5 + 1; //1 to 6
-
-      yaw *= -1; //invert yaw
+      float speedScale = speed * 3 + 2; //2 to 5
 
       //mix into three omni-wheeld drive outputs
-      float vels[3] = {0, 0, 0}; //front, right, left
+      float vels[3] = {0, 0, 0}; //back, left, right
+      #define BACK 0
+      #define LEFT 1
+      #define RGHT 2
 
       // yaw
-      vels[0] += yaw;
-      vels[1] += yaw;
-      vels[2] += yaw;
+      vels[BACK] -= yaw;
+      vels[LEFT] -= yaw;
+      vels[RGHT] -= yaw;
 
       // fwd
-      vels[1] +=  fwd;
-      vels[2] += -fwd;
+      vels[LEFT] += fwd;
+      vels[RGHT] += -fwd;
 
       // side
-      vels[0] +=  side;
-      vels[1] += -side / 2;
-      vels[2] +=  side / 2;
+      vels[BACK] += -side * 1;
+      vels[LEFT] += -side / 8;
+      vels[RGHT] += -side / 8;
 
       //now output the drive commands
 
-      if (Serial && Serial.availableForWrite())
-        Serial.printf("drive: %0.3f %0.3f %0.3f\n", vels[0], vels[1], vels[2]);
 
       for (int i = 0; i < NUM_ODRIVES; i++) {
         odrives_[i]->setVelocity(vels[i] * speedScale, 0);
