@@ -4,6 +4,8 @@
 #include <can_common.h>
 #include <ODriveCAN.h>
 #include <AlfredoCRSF.h>
+#include <I2C_MPU6886.h>
+#include <MadgwickAHRS.h>
 
 #define NUM_ODRIVES 3
 
@@ -18,6 +20,9 @@ class Controller {
 
   AlfredoCRSF crsf_;
   int8_t lastState_ = -1;
+  I2C_MPU6886 imu_;
+  Madgwick imuFilt_;
+
 
 public:
   Controller(String version);
@@ -26,6 +31,7 @@ public:
   void setup();
   void loop();
 
+  bool updateIMU();
   void onCanMessageReceived(CAN_FRAME* frame);
 
   const String version_;

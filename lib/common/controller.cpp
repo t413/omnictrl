@@ -31,6 +31,11 @@ void Controller::setup() {
   Serial1.begin(CRSF_BAUDRATE, SERIAL_8N1, 5, 6);
   crsf_.begin(Serial1);
 
+  Wire1.begin(38, 39);
+  imu_ = I2C_MPU6886(I2C_MPU6886_DEFAULT_ADDRESS, Wire1);
+  imu_.begin();
+  imuFilt_.begin(20);  // 20hz
+
   commsWrapper_.send_msg_ = [](void* intf, uint32_t id, uint8_t length, const uint8_t* data) {
     if (Serial && Serial.availableForWrite())
       Serial.printf("tx frame: id=%d, len=%d\n", id, length);
@@ -105,10 +110,16 @@ uint32_t lastOdrive = 1000;
 uint32_t lastPollStats = 0;
 uint32_t lastTxStats = 0;
 uint32_t lastClear = 0;
+uint32_t lastIMU = 0;
 
 void Controller::loop() {
   uint32_t now = millis();
   bool shouldClear = false;
+
+  if ((now - lastIMU) > 20) {
+    updateIMU();
+    lastIMU = now;
+  }
 
   if ((now - lastPollStats) > 500) {
     //read power stats from odrive
@@ -277,6 +288,13 @@ void Controller::loop() {
   crsf_.update();
 }
 
+bool Controller::updateIMU() {
+  float v[6] = {0};
+  imu_.getGyro(&v[0], &v[1], &v[2]);
+  imu_.getAccel(&v[3], &v[4], &v[5]);
+  imuFilt_.updateIMU(v[0], v[1], v[2], v[3], v[4], v[5]);
+  return true;
+}
 
 void Controller::onCanMessageReceived(CAN_FRAME* frame) {
   // Serial.printf(" > rx id=%d, len=%d\n", frame->id, frame->length);
