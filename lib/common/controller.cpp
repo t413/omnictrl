@@ -28,7 +28,7 @@ void Controller::setup() {
   }
   delay(100);
 
-  Serial1.begin(CRSF_BAUDRATE, SERIAL_8N1, 38, 39);
+  Serial1.begin(CRSF_BAUDRATE, SERIAL_8N1, 5, 6);
   crsf_.begin(Serial1);
 
   commsWrapper_.send_msg_ = [](void* intf, uint32_t id, uint8_t length, const uint8_t* data) {
@@ -38,15 +38,16 @@ void Controller::setup() {
     frame.id = id;
     frame.length = length;
     frame.extended = false;
-    frame.rtr = false; //remote transmission request
+    frame.rtr = data == NULL; //remote transmission request
     memcpy(frame.data.uint8, data, length);
     return CAN0.sendFrame(frame);
   };
   commsWrapper_.pump_events_ = [](void* intf) {
-    CAN_FRAME frame;
-    while (CAN0.read(frame)) {
-      controller_->onCanMessageReceived(&frame);
+    if (Serial && Serial.availableForWrite()) {
+      Serial.print(".");
+      Serial.flush();
     }
+    delay(1); //can messages are async, so just wait a bit
   };
 
   CAN0.setCANPins(GPIO_NUM_2, GPIO_NUM_1);
@@ -101,15 +102,15 @@ void Controller::setup() {
 
 uint32_t lastDraw = 0;
 uint32_t lastOdrive = 1000;
-uint32_t lastStats = 0;
+uint32_t lastPollStats = 0;
+uint32_t lastTxStats = 0;
 uint32_t lastClear = 0;
 
 void Controller::loop() {
   uint32_t now = millis();
   bool shouldClear = false;
 
-#if 0
-  if ((now - lastStats) > 500) {
+  if ((now - lastPollStats) > 500) {
     //read power stats from odrive
     for (int i = 0; i < NUM_ODRIVES; i++) {
       //if heartbeat is too old, skip
@@ -123,9 +124,19 @@ void Controller::loop() {
         break; //only read one
       }
     }
-    lastStats = now;
+    lastPollStats = now;
   }
-#endif
+
+  if (((now - lastTxStats) > 100) && crsf_.isLinkUp()) {
+    crsf_sensor_battery_t crsfBatt = {
+      .voltage = htobe16((uint16_t)(lastBusStatus_.Bus_Voltage * 10.0)),
+      .current = htobe16((uint16_t)(lastBusStatus_.Bus_Current * 10.0)),
+      .capacity = htobe16((uint16_t)(0)) << 8,
+      .remaining = (uint8_t)(0),
+    };
+    crsf_.queuePacket(CRSF_SYNC_BYTE, CRSF_FRAMETYPE_BATTERY_SENSOR, &crsfBatt, sizeof(crsfBatt));
+    lastTxStats = now;
+  }
 
   if ((now - lastOdrive) > 20) {
 
@@ -163,9 +174,10 @@ void Controller::loop() {
       if (arm != lastState_) {
         if (Serial && Serial.availableForWrite())
           Serial.printf("SETTING STATE %s\n", arm? "ARM" : "DISARM");
-        for (int i = 0; i < NUM_ODRIVES; i++)
+        for (int i = 0; i < NUM_ODRIVES; i++) {
+          odrives_[i]->clearErrors();
           odrives_[i]->setState(arm? AXIS_STATE_CLOSED_LOOP_CONTROL : AXIS_STATE_IDLE);
-
+        }
         lastState_ = arm? 1 : 0;
         shouldClear = true;
       }
@@ -222,7 +234,7 @@ void Controller::loop() {
     M5.Lcd.setCursor(0, 0);
     M5.Lcd.setTextColor(WHITE, crsf_.isLinkUp()? BLUE : RED);
     M5.Lcd.setFont(&FreeSansBold12pt7b);
-    M5.Lcd.printf(" %s ", crsf_.isLinkUp()? "CRSF up" : "NO CRSF");
+    M5.Lcd.printf(" %s\n", crsf_.isLinkUp()? "CRSF up" : "NO CRSF");
 
     //next show odrive status
     // M5.Lcd.setCursor(0, 30);
@@ -233,8 +245,8 @@ void Controller::loop() {
     if (validDrives) {
       //show drive voltage
       M5.Lcd.setTextColor(WHITE, BLACK);
-      M5.Lcd.setFont(&FreeSansBold12pt7b);
-      M5.Lcd.printf("%0.2fV\n", lastBusStatus_.Bus_Voltage);
+      M5.Lcd.setFont(&FreeSansBold18pt7b);
+      M5.Lcd.printf("%0.1fV\n", lastBusStatus_.Bus_Voltage);
     } else {
       M5.Lcd.setTextColor(WHITE, RED);
       M5.Lcd.setFont(&FreeSansBold12pt7b);
