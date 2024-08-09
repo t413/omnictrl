@@ -1,5 +1,6 @@
 #pragma once
 
+#include "pid.h"
 #include <WString.h>
 #include <can_common.h>
 #include <ODriveCAN.h>
@@ -22,6 +23,8 @@ class Controller {
   int8_t lastState_ = -1;
   I2C_MPU6886 imu_;
   Madgwick imuFilt_;
+  float gyroZ = 0;
+  PIDCtrl yawCtrl_ = PIDCtrl(0.07, 0.1, 0.003, 3);
 
 
 public:

@@ -1,4 +1,5 @@
 #include "controller.h"
+#include "utils.h"
 #include <Arduino.h>
 #include <M5Unified.h>
 #include <WiFiUdp.h>
@@ -166,18 +167,20 @@ void Controller::loop() {
         for (int i = 0; i < NUM_ODRIVES; i++) {
           odrives_[i]->clearErrors();
           odrives_[i]->setState(arm? AXIS_STATE_CLOSED_LOOP_CONTROL : AXIS_STATE_IDLE);
+          yawCtrl_.reset();
         }
         lastState_ = arm? 1 : 0;
         shouldClear = true;
       }
 
       //control
-      float fwd = (crsf_.getChannel(2) - 1500) / 500.0; //now (-1 to 1)
-      float side = (crsf_.getChannel(1) - 1500) / 500.0; //now (-1 to 1)
-      float yaw = (crsf_.getChannel(4) - 1500) / 500.0; //now (-1 to 1)
+      float speed = mapfloat(crsf_.getChannel(7), 1000, 2000, 2, 5);
+
+      float fwd = mapfloat(crsf_.getChannel(2), 1000, 2000, -speed, speed);
+      float side = mapfloat(crsf_.getChannel(1), 1000, 2000, -speed, speed);
+      float yaw = mapfloat(crsf_.getChannel(4), 1000, 2000, -speed, speed);
+      float thr = mapfloat(crsf_.getChannel(3), 1000, 2000, 0.0, 1.0);
       //aux selector: speed
-      float speed = (crsf_.getChannel(7) - 1000) / 1000.0; //now (0 to 1)
-      float speedScale = speed * 3 + 2; //2 to 5
 
       //mix into three omni-wheeld drive outputs
       float vels[3] = {0, 0, 0}; //back, left, right
@@ -186,24 +189,25 @@ void Controller::loop() {
       #define RGHT 2
 
       // yaw
-      vels[BACK] -= yaw;
-      vels[LEFT] -= yaw;
-      vels[RGHT] -= yaw;
+      float y = yawCtrl_.update(gyroZ + yaw * 100);
+      vels[BACK] -= y;
+      vels[LEFT] -= y;
+      vels[RGHT] -= y;
 
       // fwd
       vels[LEFT] += -fwd;
       vels[RGHT] += fwd;
 
       // side
-      vels[BACK] += side * 1;
-      vels[LEFT] += side / 8;
-      vels[RGHT] += side / 8;
+      vels[BACK] += side * 2;
+      vels[LEFT] += side / 4;
+      vels[RGHT] += side / 4;
 
       //now output the drive commands
 
 
       for (int i = 0; i < NUM_ODRIVES; i++) {
-        odrives_[i]->setVelocity(vels[i] * speedScale, 0);
+        odrives_[i]->setVelocity(vels[i], 0);
       }
 
       if (Serial && Serial.availableForWrite()) {
@@ -279,6 +283,7 @@ bool Controller::updateIMU() {
   imu_.getGyro(&v[0], &v[1], &v[2]);
   imu_.getAccel(&v[3], &v[4], &v[5]);
   imuFilt_.updateIMU(v[0], v[1], v[2], v[3], v[4], v[5]);
+  gyroZ = v[2];
   return true;
 }
 
