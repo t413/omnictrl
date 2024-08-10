@@ -140,7 +140,25 @@ void Controller::loop() {
     };
     crsf_.queuePacket(CRSF_SYNC_BYTE, CRSF_FRAMETYPE_BATTERY_SENSOR, &crsfBatt, sizeof(crsfBatt));
     lastTxStats = now;
+
+    if (Serial && Serial.availableForWrite()) {
+      for (int i = 0; i < NUM_ODRIVES; i++) {
+        Serial.printf("o%d: e%x s%d\n", i, lastHeartbeats_[i].Axis_Error, lastHeartbeats_[i].Axis_State);
+      }
+      Serial.println();
+    }
   }
+
+  #define NUM_TUNABLES 3
+  float* tuneables[NUM_TUNABLES] = { &yawCtrl_.P, &yawCtrl_.I, &yawCtrl_.D };
+  char tuneableLabels[NUM_TUNABLES] = { 'P', 'I', 'D' };
+
+    if (M5.BtnA.wasPressed()) {
+      selectedTune_ = (selectedTune_ + 1) % NUM_TUNABLES + 1; //+1 for disabled
+      shouldClear = true;
+    }
+  float* tunable = selectedTune_ < NUM_TUNABLES? tuneables[selectedTune_] : NULL;
+  char tuneLabel = tuneableLabels[selectedTune_ % NUM_TUNABLES];
 
   if ((now - lastOdrive) > 20) {
 
@@ -155,6 +173,22 @@ void Controller::loop() {
       }
     }
     //TODO check for issues
+
+    //control inputs
+    maxSpeed_ = mapfloat(crsf_.getChannel(7), 1000, 2000, 2, 6); //aux 2: speed selection
+
+    float fwd = mapfloat(crsf_.getChannel(2), 1000, 2000, -maxSpeed_, maxSpeed_);
+    float side = mapfloat(crsf_.getChannel(1), 1000, 2000, -maxSpeed_, maxSpeed_);
+    float yaw = mapfloat(crsf_.getChannel(4), 1000, 2000, -maxSpeed_, maxSpeed_);
+    float thr = mapfloat(crsf_.getChannel(3), 1000, 2000, 0.0, 1.0);
+    bool enableAdjustment = crsf_.getChannel(8) > 1500;
+    yawCtrlEnabled_ = crsf_.getChannel(6) < 1600 || enableAdjustment;
+
+    if (enableAdjustment && tunable) {
+      // *tunable = thr / 10.0; //linear
+      //thr is 0-1, so we want to map it to 0.01-100
+      *tunable = pow(10, mapfloat(thr, 0, 1, -2, 2)); //log from 0.01 to 100
+    }
 
     //main control loop
     if (validCount) { //at least one
@@ -173,15 +207,6 @@ void Controller::loop() {
         shouldClear = true;
       }
 
-      //control
-      float speed = mapfloat(crsf_.getChannel(7), 1000, 2000, 2, 5);
-
-      float fwd = mapfloat(crsf_.getChannel(2), 1000, 2000, -speed, speed);
-      float side = mapfloat(crsf_.getChannel(1), 1000, 2000, -speed, speed);
-      float yaw = mapfloat(crsf_.getChannel(4), 1000, 2000, -speed, speed);
-      float thr = mapfloat(crsf_.getChannel(3), 1000, 2000, 0.0, 1.0);
-      //aux selector: speed
-
       //mix into three omni-wheeld drive outputs
       float vels[3] = {0, 0, 0}; //back, left, right
       #define BACK 0
@@ -189,10 +214,11 @@ void Controller::loop() {
       #define RGHT 2
 
       // yaw
-      float y = yawCtrl_.update(gyroZ + yaw * 100);
-      vels[BACK] -= y;
-      vels[LEFT] -= y;
-      vels[RGHT] -= y;
+      yawCtrl_.limit = maxSpeed_;
+      float y = yawCtrlEnabled_? yawCtrl_.update((-yaw * 100) - gyroZ) : -yaw; //convert yaw to angular rate
+      vels[BACK] += y;
+      vels[LEFT] += y;
+      vels[RGHT] += y;
 
       // fwd
       vels[LEFT] += -fwd;
@@ -205,9 +231,10 @@ void Controller::loop() {
 
       //now output the drive commands
 
-
-      for (int i = 0; i < NUM_ODRIVES; i++) {
-        odrives_[i]->setVelocity(vels[i], 0);
+      if (arm) {
+        for (int i = 0; i < NUM_ODRIVES; i++) {
+          odrives_[i]->setVelocity(vels[i], 0);
+        }
       }
 
       if (Serial && Serial.availableForWrite()) {
@@ -233,11 +260,10 @@ void Controller::loop() {
     //first show crsf connection status
     M5.Lcd.setCursor(0, 0);
     M5.Lcd.setTextColor(WHITE, crsf_.isLinkUp()? BLUE : RED);
-    M5.Lcd.setFont(&FreeSansBold12pt7b);
-    M5.Lcd.printf(" %s\n", crsf_.isLinkUp()? "CRSF up" : "NO CRSF");
+    M5.Lcd.setFont(&FreeMono12pt7b);
+    M5.Lcd.printf(" %s \n", crsf_.isLinkUp()? "link ok" : "NO LINK");
 
     //next show odrive status
-    // M5.Lcd.setCursor(0, 30);
     uint8_t validDrives = 0;
     for (int i = 0; i < NUM_ODRIVES; i++)
       if (lastHeartbeatTimes_[i] > (now - 100))
@@ -246,29 +272,41 @@ void Controller::loop() {
       //show drive voltage
       M5.Lcd.setTextColor(WHITE, BLACK);
       M5.Lcd.setFont(&FreeSansBold18pt7b);
-      M5.Lcd.printf("%0.1fV\n", lastBusStatus_.Bus_Voltage);
+      M5.Lcd.printf("%0.1fV", lastBusStatus_.Bus_Voltage);
+      M5.Lcd.setFont(&FreeSansBold9pt7b); //small
+      for (int i = 0; i < NUM_ODRIVES; i++) {
+        M5.Lcd.setTextColor(WHITE, lastHeartbeatTimes_[i] > (now - 100)? DARKGREEN : RED);
+        M5.Lcd.printf("%d", i);
+      }
+      M5.Lcd.setFont(&FreeSansBold18pt7b);
+      M5.Lcd.printf("\n"); //newline with big font
     } else {
       M5.Lcd.setTextColor(WHITE, RED);
       M5.Lcd.setFont(&FreeSansBold12pt7b);
       M5.Lcd.printf("no drives\n");
     }
 
-    if (lastState_ > 0) {
+    if (tunable) {
       M5.Lcd.setTextColor(DARKGREEN, WHITE);
-      M5.Lcd.setFont(&FreeSansBold12pt7b);
-      //put on new line, under last one
-      M5.Lcd.printf("ARMED");
+      M5.Lcd.setFont(&FreeMono9pt7b);
+      M5.Lcd.printf(" %c: %0.3f ", tuneLabel, *tunable);
     }
 
-    //bottom aligned
     M5.Lcd.setFont(&FreeSansBold9pt7b);
-    M5.Lcd.setCursor(0, M5.Lcd.height() - 20);
     M5.Lcd.setTextColor(WHITE, BLACK);
-    M5.Lcd.printf("  %.2f  ", 1 / 1000.0 * now);
+    M5.Lcd.printf(" spd %d %s", (uint8_t)maxSpeed_, yawCtrlEnabled_? "[yaw]" : "");
 
-    if (M5.BtnA.wasPressed()) {
-      if (Serial && Serial.availableForWrite())
-        Serial.println("A pressed");
+    //bottom aligned
+    M5.Lcd.setFont(&Font0);
+    M5.Lcd.setCursor(0, M5.Lcd.height() - 8);
+    M5.Lcd.setTextColor(WHITE, BLACK);
+    M5.Lcd.printf(" %.2f ", 1 / 1000.0 * now);
+
+    for (int i = 0; i < NUM_ODRIVES; i++) {
+      auto err = lastHeartbeats_[i].Axis_Error;
+      if (!err) continue;
+      M5.Lcd.setTextColor(RED, BLACK);
+      M5.Lcd.printf("[o%d:e%x]", i, err);
     }
 
     M5.Lcd.endWrite();
