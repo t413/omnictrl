@@ -24,7 +24,7 @@ class Controller {
   I2C_MPU6886 imu_;
   Madgwick imuFilt_;
   float gyroZ = 0;
-  PIDCtrl yawCtrl_ = PIDCtrl(0.07, 0.1, 0.003, 3);
+  PIDCtrl yawCtrl_ = PIDCtrl(0.25, 1.0, 0.022, 3);
   uint8_t selectedTune_ = 3;
   float maxSpeed_ = 0.0;
   bool yawCtrlEnabled_ = false;

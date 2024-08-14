@@ -153,10 +153,10 @@ void Controller::loop() {
   float* tuneables[NUM_TUNABLES] = { &yawCtrl_.P, &yawCtrl_.I, &yawCtrl_.D };
   char tuneableLabels[NUM_TUNABLES] = { 'P', 'I', 'D' };
 
-    if (M5.BtnA.wasPressed()) {
-      selectedTune_ = (selectedTune_ + 1) % NUM_TUNABLES + 1; //+1 for disabled
-      shouldClear = true;
-    }
+  if (M5.BtnA.wasPressed()) {
+    selectedTune_ = (selectedTune_ + 1) % (NUM_TUNABLES + 1); //+1 for disabled
+    shouldClear = true;
+  }
   float* tunable = selectedTune_ < NUM_TUNABLES? tuneables[selectedTune_] : NULL;
   char tuneLabel = tuneableLabels[selectedTune_ % NUM_TUNABLES];
 
@@ -187,7 +187,9 @@ void Controller::loop() {
     if (enableAdjustment && tunable) {
       // *tunable = thr / 10.0; //linear
       //thr is 0-1, so we want to map it to 0.01-100
-      *tunable = pow(10, mapfloat(thr, 0, 1, -2, 2)); //log from 0.01 to 100
+      *tunable = pow(10, mapfloat(thr, 0, 1, -2, 2));
+      //allow 0 values
+      if (thr < 0.01) *tunable = 0;
     }
 
     //main control loop
@@ -225,9 +227,9 @@ void Controller::loop() {
       vels[RGHT] += fwd;
 
       // side
-      vels[BACK] += side * 2;
-      vels[LEFT] += side / 4;
-      vels[RGHT] += side / 4;
+      vels[BACK] +=   side * 2;
+      vels[LEFT] += - side * 1.33;
+      vels[RGHT] += - side * 1.33;
 
       //now output the drive commands
 
@@ -288,8 +290,8 @@ void Controller::loop() {
 
     if (tunable) {
       M5.Lcd.setTextColor(DARKGREEN, WHITE);
-      M5.Lcd.setFont(&FreeMono9pt7b);
-      M5.Lcd.printf(" %c: %0.3f ", tuneLabel, *tunable);
+      M5.Lcd.setFont(&FreeMonoBoldOblique9pt7b);
+      M5.Lcd.printf("%c: %0.3f\n", tuneLabel, *tunable);
     }
 
     M5.Lcd.setFont(&FreeSansBold9pt7b);

@@ -12,6 +12,7 @@ public:
     float I = 0;
     float D = 0;
     float limit = 0;
+    float tuneScale = 0.1; //scale factor for tuning
 
 protected:
     float prevErr = 0;
