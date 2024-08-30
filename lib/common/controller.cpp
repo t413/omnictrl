@@ -7,6 +7,20 @@
 
 #define CAN_BAUDRATE 250000
 #define ODRV0_NODE_ID 16
+#if defined(DARDUINO_M5Stack_ATOMS3)
+#define PIN_CRSF_RX 5
+#define PIN_CRSF_TX 6
+#define PIN_CAN_RX 2
+#define PIN_CAN_TX 1
+#elif defined(ARDUINO_M5Stick_C)
+#define PIN_CRSF_RX 33
+#define PIN_CRSF_TX 32
+#define PIN_CAN_RX 26
+#define PIN_CAN_TX 36
+#else
+#error "unknown board"
+#endif
+
 
 Controller::~Controller() { }
 
@@ -29,10 +43,14 @@ void Controller::setup() {
   }
   delay(100);
 
-  Serial1.begin(CRSF_BAUDRATE, SERIAL_8N1, 5, 6);
+  Serial1.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_CRSF_RX, PIN_CRSF_TX);
   crsf_.begin(Serial1);
 
+#ifdef DARDUINO_M5Stack_ATOMS3
   Wire1.begin(38, 39);
+#else
+  Wire1.begin();
+#endif
   imu_ = I2C_MPU6886(I2C_MPU6886_DEFAULT_ADDRESS, Wire1);
   imu_.begin();
   imuFilt_.begin(20);  // 20hz
@@ -50,7 +68,7 @@ void Controller::setup() {
     delay(1); //can messages are async, so just wait a bit
   };
 
-  CAN0.setCANPins(GPIO_NUM_2, GPIO_NUM_1);
+  CAN0.setCANPins((gpio_num_t)PIN_CAN_RX, (gpio_num_t)PIN_CAN_TX);
   auto ret = CAN0.init(CAN_BAUDRATE);
   if (Serial && Serial.availableForWrite())
     Serial.printf("CAN0 init: %d\n", ret);
@@ -209,28 +227,32 @@ void Controller::loop() {
         shouldClear = true;
       }
 
-      //mix into three omni-wheeld drive outputs
-      float vels[3] = {0, 0, 0}; //back, left, right
+      float vels[NUM_MOTORS] = {0};
+      yawCtrl_.limit = maxSpeed_;
+      float y = yawCtrlEnabled_? yawCtrl_.update((-yaw * 100) - gyroZ) : -yaw; //convert yaw to angular rate
+#if NUM_MOTORS == 3
       #define BACK 0
       #define LEFT 1
       #define RGHT 2
+      // yaw, fwd, side
+      vels[BACK] += y  +   0   + side * 2;
+      vels[LEFT] += y  - fwd   - side * 1.33;
+      vels[RGHT] += y  + fwd   - side * 1.33;
 
-      // yaw
-      yawCtrl_.limit = maxSpeed_;
-      float y = yawCtrlEnabled_? yawCtrl_.update((-yaw * 100) - gyroZ) : -yaw; //convert yaw to angular rate
-      vels[BACK] += y;
-      vels[LEFT] += y;
-      vels[RGHT] += y;
+#elif NUM_MOTORS == 4
+      #define BK_L 0
+      #define BK_R 1
+      #define FR_R 2
+      #define FR_L 3
+      // yaw, fwd
+      vels[BK_L] += y  +  fwd;
+      vels[BK_R] += y  -  fwd;
+      vels[FR_R] += y  -  fwd;
+      vels[FR_L] += y  +  fwd;
 
-      // fwd
-      vels[LEFT] += -fwd;
-      vels[RGHT] += fwd;
-
-      // side
-      vels[BACK] +=   side * 2;
-      vels[LEFT] += - side * 1.33;
-      vels[RGHT] += - side * 1.33;
-
+#else
+#error "unsupported motor count, is: NUM_MOTORS"
+#endif
       //now output the drive commands
 
       if (arm) {
@@ -239,12 +261,12 @@ void Controller::loop() {
         }
       }
 
-      if (Serial && Serial.availableForWrite()) {
-        Serial.printf("r:%0.2f;p:%0.2f;y:%0.2f\n", imuFilt_.getRoll(), imuFilt_.getPitch(), imuFilt_.getYaw());
-        Serial.printf("v0:%0.2f;v1:%0.2f;v2:%0.2f\n", vels[0], vels[1], vels[2]);
-        for (int i = 0; i < NUM_ODRIVES; i++)
-          Serial.printf("pos%d:%0.2f;vel%d:%0.2f\n", i, lastFeedbacks_[i].Pos_Estimate, i, lastFeedbacks_[i].Vel_Estimate);
-      }
+      // if (Serial && Serial.availableForWrite()) {
+      //   Serial.printf("r:%0.2f;p:%0.2f;y:%0.2f\n", imuFilt_.getRoll(), imuFilt_.getPitch(), imuFilt_.getYaw());
+      //   Serial.printf("v0:%0.2f;v1:%0.2f;v2:%0.2f\n", vels[0], vels[1], vels[2]);
+      //   for (int i = 0; i < NUM_ODRIVES; i++)
+      //     Serial.printf("pos%d:%0.2f;vel%d:%0.2f\n", i, lastFeedbacks_[i].Pos_Estimate, i, lastFeedbacks_[i].Vel_Estimate);
+      // }
 
     }
 
@@ -258,9 +280,17 @@ void Controller::loop() {
       M5.Lcd.fillScreen(lastState_ > 0? DARKGREEN : BLACK);
       lastClear = now;
     }
-
-    //first show crsf connection status
     M5.Lcd.setCursor(0, 0);
+
+    // if this has a battery, show that
+    auto power = M5.Power.getType();
+    if (power != M5.Power.pmic_unknown) {
+      M5.Lcd.setTextColor(WHITE, BLACK);
+      M5.Lcd.setFont(&FreeMono12pt7b);
+      M5.Lcd.printf(" %0.1fV\n", M5.Power.getBatteryVoltage() / 1000.0);
+    }
+
+    //show crsf connection status
     M5.Lcd.setTextColor(WHITE, crsf_.isLinkUp()? BLUE : RED);
     M5.Lcd.setFont(&FreeMono12pt7b);
     M5.Lcd.printf(" %s \n", crsf_.isLinkUp()? "link ok" : "NO LINK");
