@@ -7,23 +7,18 @@
 #define TX_PIN GPIO_NUM_2
 
 #define BTN_PIN GPIO_NUM_41
+#define POLLING_RATE_MS 1000
 OneButton btn(BTN_PIN, true);
 
-// Intervall:
-#define TRANSMIT_RATE_MS 1000
-#define POLLING_RATE_MS 1000
-
-static bool driver_installed = false;
-
 uint8_t CYBERGEAR_CAN_ID = 0x7F;
+// uint8_t CYBERGEAR_CAN_ID = 0x80;
+// uint8_t CYBERGEAR_CAN_ID = 0x02;
 uint8_t MASTER_CAN_ID = 0x00;
 XiaomiCyberGearDriver cybergear = XiaomiCyberGearDriver(CYBERGEAR_CAN_ID, MASTER_CAN_ID);
 
 bool isEnabled = false;
 bool direction = true;
 float speedDesired = 0.0;
-float speedFiltered = 0.0;
-bool isAutoMode = true;
 
 void setup() {
   // initialize TWAI (CAN) interface to communicate with Xiaomi CyberGear
@@ -34,9 +29,6 @@ void setup() {
 
   cybergear.stop_motor(); //just in case
   cybergear.set_position_ref(0.0); /* set initial rotor position */
-
-  // TWAI driver is now successfully installed and started
-  driver_installed = true;
 
   btn.setClickMs(300);
   btn.attachClick([]() {
@@ -61,15 +53,23 @@ void setup() {
     if (Serial) Serial.printf("Direction: %s\n", direction ? "forward" : "backward");
   });
   btn.attachLongPressStop([]() {
-    if (!isEnabled) {
-      isAutoMode = !isAutoMode;
-      if (Serial) Serial.printf("Auto mode: %s\n", isAutoMode ? "on" : "off");
-    }
+    //set new CAD ID
+    CYBERGEAR_CAN_ID = (CYBERGEAR_CAN_ID - 2); //decrement
+    Serial.println();
+    Serial.println();
+    Serial.printf("setting new CYBERGEAR_CAN_ID: %x\n", CYBERGEAR_CAN_ID);
+    cybergear.set_motor_can_id(CYBERGEAR_CAN_ID);
+    Serial.println("done");
   });
 }
 
 static void handle_rx_message(twai_message_t& message) {
-  if (((message.identifier & 0xFF00) >> 8) == CYBERGEAR_CAN_ID){
+  auto canid = (message.identifier & 0xFF00) >> 8;
+  Serial.printf("Received message: canid: 0x%x, id: 0x%x len %d: {", canid, message.identifier, message.data_length_code);
+  for (int i = 0; i < message.data_length_code; i++)
+    Serial.printf("0x%x ", message.data[i]);
+  Serial.println("}");
+  if (canid == CYBERGEAR_CAN_ID){
     cybergear.process_message(message);
   }
 }
@@ -96,10 +96,9 @@ static void check_alerts(){
       Serial.printf("TX error: %d\t", twai_status.tx_error_counter);
       Serial.printf("TX failed: %d\n", twai_status.tx_failed_count);
     }
-    // if (alerts_triggered & TWAI_ALERT_TX_SUCCESS) {
-    //   Serial.println("Alert: The Transmission was successful.");
-    //   Serial.printf("TX buffered: %d\t", twai_status.msgs_to_tx);
-    // }
+    if (alerts_triggered & TWAI_ALERT_TX_SUCCESS)
+      Serial.printf(" > tx ack status 0x%x\n", alerts_triggered);
+      //TODO maybe store that the system is working?
   }
 
   // Check if message is received
@@ -124,26 +123,17 @@ void loop() {
   const auto now = millis();
   btn.tick();
 
-  if (!driver_installed)
-    return delay(500);
-
   if (now - lastControl > 50) {
-    speedFiltered = 0.9 * speedFiltered + 0.1 * speedDesired;
     if (isEnabled) {
-      if (isAutoMode) //then set speed to sin wave
-        speedDesired = 10.0 * sin(now / 500.0);
-      setSpeed(speedFiltered);
+      setSpeed(10.0 * sin(now / 500.0));
     }
     lastControl = now;
   }
 
-  if (now - lastStatusRequest > 333) {
+  if ((now - lastStatusRequest) > 333) {
     if (btn.isLongPressed()) {
       auto down = btn.getPressedMs();
-      if (Serial) Serial.printf("Long pressed for %d ms, en%d spd%f\n", down, isEnabled, speedFiltered);
-      if (isEnabled) {
-        speedDesired = (down / 1000.0 * 5.0) * (direction ? 1 : -1);
-      }
+      if (Serial) Serial.printf("Long pressed for %d ms, en%d\n", down, isEnabled);
     }
 
     check_alerts();
