@@ -31,10 +31,12 @@ class Controller {
   Madgwick imuFilt_;
   float gyroZ = 0;
   PIDCtrl yawCtrl_ = PIDCtrl(0.28, 0.08, 0.0, 3);
+  float balancePoint_ = 0.0;
+  PIDCtrl balanceCtrl_ = PIDCtrl(0.28, 0.08, 0.0, 3);
   uint8_t selectedTune_ = 3;
   float maxSpeed_ = 0.0;
   bool yawCtrlEnabled_ = false;
-
+  bool balanceModeEnabled_ = false;
 
 public:
   Controller(String version);

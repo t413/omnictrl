@@ -186,9 +186,9 @@ void Controller::loop() {
   }
 #endif
 
-  #define NUM_TUNABLES 3
-  float* tuneables[NUM_TUNABLES] = { &yawCtrl_.P, &yawCtrl_.I, &yawCtrl_.D };
-  char tuneableLabels[NUM_TUNABLES] = { 'P', 'I', 'D' };
+  #define NUM_TUNABLES 4
+  float* tuneables[NUM_TUNABLES] = { &balancePoint_, &balanceCtrl_.P, &balanceCtrl_.I, &balanceCtrl_.D };
+  char tuneableLabels[NUM_TUNABLES] = { 'b', 'P', 'I', 'D' };
 
   if (M5.BtnA.wasPressed()) {
     selectedTune_ = (selectedTune_ + 1) % (NUM_TUNABLES + 1); //+1 for disabled
@@ -216,7 +216,8 @@ void Controller::loop() {
     float yaw = mapfloat(crsf_.getChannel(4), 1000, 2000, -maxSpeed_, maxSpeed_);
     float thr = mapfloat(crsf_.getChannel(3), 1000, 2000, 0.0, 1.0);
     bool enableAdjustment = crsf_.getChannel(8) > 1500;
-    yawCtrlEnabled_ = crsf_.getChannel(6) < 1600 || enableAdjustment;
+    yawCtrlEnabled_ = crsf_.getChannel(6) > 1400 || enableAdjustment;
+    balanceModeEnabled_ = crsf_.getChannel(6) > 1600;
 
     if (enableAdjustment && tunable) {
       // *tunable = thr / 10.0; //linear
@@ -245,6 +246,14 @@ void Controller::loop() {
       float vels[NUM_MOTORS] = {0};
       yawCtrl_.limit = maxSpeed_;
       float y = yawCtrlEnabled_? yawCtrl_.update((-yaw * 100) - gyroZ) : -yaw; //convert yaw to angular rate
+      if (balanceModeEnabled_) {
+        //balance mode
+        float pitch = imuFilt_.getRoll();
+        float p = balanceCtrl_.update(pitch - balancePoint_);
+        fwd += p;
+        if (Serial && Serial.availableForWrite())
+          Serial.printf("\tpitch:%0.2f;roll:%0.2f;\n", pitch, imuFilt_.getPitch());
+      }
 #if NUM_MOTORS == 3
       #define BACK 0
       #define LEFT 1
