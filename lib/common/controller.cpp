@@ -250,9 +250,9 @@ void Controller::loop() {
       #define LEFT 1
       #define RGHT 2
       // yaw, fwd, side
-      vels[BACK] += y  +   0   + side * 2;
-      vels[LEFT] += y  + fwd   - side * 1.33;
-      vels[RGHT] += y  - fwd   - side * 1.33;
+      vels[BACK] += y  +   0   + side;
+      vels[LEFT] += y  + fwd   - side * 1.33/2;
+      vels[RGHT] += y  - fwd   - side * 1.33/2;
 
 #elif NUM_MOTORS == 4
       #define BK_L 0
