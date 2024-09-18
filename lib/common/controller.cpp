@@ -102,14 +102,6 @@ void Controller::setup() {
   Serial1.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_CRSF_RX, PIN_CRSF_TX);
   crsf_.begin(Serial1);
 
-#ifdef ARDUINO_M5Stack_ATOMS3
-  Wire1.begin(38, 39);
-#else
-  Wire1.begin();
-#endif
-  imu_ = I2C_MPU6886(I2C_MPU6886_DEFAULT_ADDRESS, Wire1);
-  imu_.begin();
-  imuFilt_.begin(20);  // 20hz
 
   for (int i = 0; i < NUM_DRIVES; i++) {
     drives_[i].id_ = DRIVE_IDS[i];
@@ -129,6 +121,11 @@ void Controller::setup() {
   // auto cfg = M5.config();
   M5.begin();
   M5.Power.begin();
+  if (M5.Imu.isEnabled()) {
+    M5.Imu.loadOffsetFromNVS();
+    // M5.Imu.setAxisOrderRightHanded( ??
+    imuFilt_.setFrequency(50); //50Hz, 20ms
+  }
 
   M5.Lcd.setRotation(2); //flip
   M5.Lcd.setCursor(0, 0);
@@ -149,6 +146,7 @@ uint32_t lastClear = 0;
 uint32_t lastIMU = 0;
 
 void Controller::loop() {
+  M5.update(); //updates buttons, etc
   uint32_t now = millis();
   bool shouldClear = false;
 
@@ -248,11 +246,11 @@ void Controller::loop() {
       float y = yawCtrlEnabled_? yawCtrl_.update((-yaw * 100) - gyroZ) : -yaw; //convert yaw to angular rate
       if (balanceModeEnabled_) {
         //balance mode
-        float pitch = imuFilt_.getRoll();
+        float pitch = imuFilt_.getPitchDegree();
         float p = balanceCtrl_.update(pitch - balancePoint_);
         fwd += p;
         if (Serial && Serial.availableForWrite())
-          Serial.printf("\tpitch:%0.2f;roll:%0.2f;\n", pitch, imuFilt_.getPitch());
+          Serial.printf("\tpitch:%0.2f;roll:%0.2f;\n", pitch, imuFilt_.getPitchDegree());
       }
 #if NUM_MOTORS == 3
       #define BACK 0
@@ -409,11 +407,10 @@ void Controller::loop() {
 }
 
 bool Controller::updateIMU() {
-  float v[6] = {0};
-  imu_.getGyro(&v[0], &v[1], &v[2]);
-  imu_.getAccel(&v[3], &v[4], &v[5]);
-  imuFilt_.updateIMU(v[0], v[1], v[2], v[3], v[4], v[5]);
-  gyroZ = v[2];
+  auto res = M5.Imu.isEnabled()? M5.Imu.update() : 0;
+  if (!res) return false;
+  auto data = M5.Imu.getImuData(); //no mag data it seems, sadly
+  imuFilt_.updateIMU<0,'D'>(-data.gyro.y, -data.gyro.x, data.gyro.z, data.accel.y, data.accel.x, data.accel.z); //acc x/y are swapped
   return true;
 }
 

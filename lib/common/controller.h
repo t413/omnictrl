@@ -3,7 +3,6 @@
 #include "pid.h"
 #include <WString.h>
 #include <AlfredoCRSF.h>
-#include <I2C_MPU6886.h>
 #include <MadgwickAHRS.h>
 #include <xiaomi_cybergear_driver.h>
 
@@ -27,7 +26,6 @@ class Controller {
 
   AlfredoCRSF crsf_;
   int8_t lastState_ = -1;
-  I2C_MPU6886 imu_;
   Madgwick imuFilt_;
   float gyroZ = 0;
   PIDCtrl yawCtrl_ = PIDCtrl(0.28, 0.08, 0.0, 3);
