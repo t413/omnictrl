@@ -31,11 +31,15 @@ class Controller {
   float gyroZ = 0;
   PIDCtrl yawCtrl_ = PIDCtrl(0.28, 0.08, 0.0, 10);
   PIDCtrl balanceCtrl_ = PIDCtrl(17.0, 0.50, 0.06, 20);
-  uint8_t selectedTune_ = 3;
   float maxSpeed_ = 0.0;
   bool yawCtrlEnabled_ = false;
   bool isBalancing_ = false;
   bool redrawLCD_ = false;
+
+  static const uint8_t NUM_ADJUSTABLES = 3;
+  float* adjustables_[NUM_ADJUSTABLES] = {&balanceCtrl_.P, &balanceCtrl_.I, &balanceCtrl_.D };
+  String adjNames_[NUM_ADJUSTABLES] = { "balP", "balI", "balD" };
+  uint8_t selectedTune_ = NUM_ADJUSTABLES; //none selected
 
 public:
   Controller(String version);
@@ -44,6 +48,14 @@ public:
   void setup();
   void loop();
 
+  uint8_t getValidDriveCount() const;
+
+  void drawLCD(const uint32_t);
   bool updateIMU();
   const String version_;
 };
+
+namespace m5gfx {
+  class M5GFX;
+}
+void drawCentered(const char* text, m5gfx::M5GFX &Lcd, uint16_t bg);

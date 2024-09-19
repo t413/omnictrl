@@ -139,16 +139,25 @@ void Controller::setup() {
   delay(100);
 }
 
-lgfx::rgb888_t rainbowColor(float r) {
-  float r1 = 0.0, g1 = 0.0, b1 = 0.0;
-  if (r < 0.5) {
-    r1 = 1.0 - r * 2.0;
-    g1 = r * 2.0;
-  } else {
-    g1 = 1.0 - (r - 0.5) * 2.0;
-    b1 = (r - 0.5) * 2.0;
+uint16_t rainbowColor(float v) {
+    float h = v * 6.0;
+    float x = 1.0 - fabs(fmod(h, 2.0) - 1.0);
+    return lgfx::color565(
+        (h < 1 ? 1 : h < 2 ? x : h < 4 ? 0 : h < 5 ? x : 1) * 255,
+        (h < 1 ? x : h < 3 ? 1 : h < 4 ? x : 0) * 255,
+        (h < 2 ? 0 : h < 3 ? x : h < 5 ? 1 : x) * 255
+    );
+}
+const uint16_t SUPERDARKRED = lgfx::color565(50, 0, 0);
+const uint16_t SUPERDARKBLUE = lgfx::color565(0, 0, 50);
+
+uint8_t Controller::getValidDriveCount() const {
+  uint8_t validCount = 0;
+  for (int i = 0; i < NUM_DRIVES; i++) {
+    bool hasRecent = (millis() - drives_[i].lastStatus_) < 1000;
+    if (hasRecent) validCount++;
   }
-  return lgfx::rgb888_t(r1 * 255, g1 * 255, b1 * 255);
+  return validCount;
 }
 
 uint32_t lastDraw = 0;
@@ -190,23 +199,11 @@ void Controller::loop() {
   }
 #endif
 
-  #define NUM_TUNABLES 3
-  float* tuneables[NUM_TUNABLES] = { &balanceCtrl_.P, &balanceCtrl_.I, &balanceCtrl_.D };
-  char tuneableLabels[NUM_TUNABLES] = { 'P', 'I', 'D' };
-
   if (M5.BtnA.wasPressed()) {
-    selectedTune_ = (selectedTune_ + 1) % (NUM_TUNABLES + 1); //+1 for disabled
+    selectedTune_ = (selectedTune_ + 1) % (NUM_ADJUSTABLES + 1); //+1 for disabled
     redrawLCD_ = true;
   }
-  float* tunable = selectedTune_ < NUM_TUNABLES? tuneables[selectedTune_] : NULL;
-  char tuneLabel = tuneableLabels[selectedTune_ % NUM_TUNABLES];
-
-  uint8_t validCount = 0;
-  //update each drive status
-  for (int i = 0; i < NUM_DRIVES; i++) {
-    bool hasRecent = (now - drives_[i].lastStatus_) < 1000;
-    if (hasRecent) validCount++;
-  }
+  float* tunable = selectedTune_ < NUM_ADJUSTABLES? adjustables_[selectedTune_] : NULL;
 
   if ((now - lastDrive) > 20) {
     updateIMU();
@@ -251,7 +248,7 @@ void Controller::loop() {
     }
 
     //main control loop
-    if (validCount) { //at least one
+    if (getValidDriveCount()) { //at least one
 
       //arm/disarm
       bool arm = crsf_.getChannel(5) > 1500;
@@ -322,83 +319,7 @@ void Controller::loop() {
 
   if ((now - lastDraw) > 60 || redrawLCD_) {
     M5.update(); //updates buttons
-    M5.Lcd.startWrite();
-    auto bgRainbow = rainbowColor((now >> 3) % 1000 / 1000.0).get();
-    if (redrawLCD_ || (now - lastClear) > 5000) {
-      auto color = lastState_? DARKGREEN : BLACK;
-      M5.Lcd.fillScreen(color);
-      lastClear = now;
-      redrawLCD_ = false;
-    }
-    //draw 1px line down left, right, and bottom of screen
-    M5.Lcd.drawLine(0, 0, 0, M5.Lcd.height(), bgRainbow);
-    M5.Lcd.drawLine(M5.Lcd.width() - 1, 0, M5.Lcd.width() - 1, M5.Lcd.height(), bgRainbow);
-    M5.Lcd.drawLine(0, M5.Lcd.height() - 1, M5.Lcd.width(), M5.Lcd.height() - 1, bgRainbow);
-
-    M5.Lcd.setCursor(1, 0);
-
-    // if this has a battery, show that
-    auto power = M5.Power.getType();
-    if (power != M5.Power.pmic_unknown) {
-      M5.Lcd.setTextColor(WHITE, BLACK);
-      M5.Lcd.setFont(&FreeMono12pt7b);
-      M5.Lcd.printf(" %0.1fV\n", M5.Power.getBatteryVoltage() / 1000.0);
-    }
-
-    //show crsf connection status
-    M5.Lcd.setTextColor(WHITE, crsf_.isLinkUp()? bgRainbow : RED);
-    M5.Lcd.setFont(&FreeMono12pt7b);
-    M5.Lcd.printf(" %s \n", crsf_.isLinkUp()? "link ok" : "NO LINK");
-
-    //next show odrive status
-    if (validCount) {
-#if 0
-      //show drive voltage
-      //TODO! can read 0X3007 vBus(mv) register for this if the driver will let us!
-      M5.Lcd.setTextColor(WHITE, BLACK);
-      M5.Lcd.setFont(&FreeSansBold18pt7b);
-      M5.Lcd.printf("%0.1fV", lastBusStatus_.Bus_Voltage);
-      M5.Lcd.setFont(&FreeSansBold9pt7b); //small
-      for (int i = 0; i < NUM_DRIVES; i++) {
-        M5.Lcd.setTextColor(WHITE, lastHeartbeatTimes_[i] > (now - 100)? DARKGREEN : RED);
-        M5.Lcd.printf("%d", i);
-      }
-      M5.Lcd.setFont(&FreeSansBold18pt7b);
-      M5.Lcd.printf("\n"); //newline with big font
-#endif
-    } else {
-      M5.Lcd.setTextColor(WHITE, RED);
-      M5.Lcd.setFont(&FreeSansBold12pt7b);
-      M5.Lcd.printf("no drives\n");
-    }
-
-    if (tunable) {
-      M5.Lcd.setTextColor(DARKGREEN, WHITE);
-      M5.Lcd.setFont(&FreeMonoBoldOblique9pt7b);
-      M5.Lcd.printf("%c: %0.3f\n", tuneLabel, *tunable);
-    }
-
-    M5.Lcd.setFont(&FreeSansBold9pt7b);
-    M5.Lcd.setTextColor(WHITE, BLACK);
-    M5.Lcd.printf(" spd %d", (uint8_t)maxSpeed_);
-    if (yawCtrlEnabled_ || isBalancing_) {
-      M5.Lcd.setTextColor(WHITE, bgRainbow);
-      M5.Lcd.printf(" %s", yawCtrlEnabled_? "[yaw]" : "[bal]");
-    }
-
-    //bottom aligned
-    M5.Lcd.setFont(&Font0);
-    M5.Lcd.setCursor(1, M5.Lcd.height() - 9);
-    M5.Lcd.setTextColor(WHITE, BLACK);
-    M5.Lcd.printf(" %.2f ", 1 / 1000.0 * now);
-
-    for (int i = 0; i < NUM_DRIVES; i++) {
-      if (!drives_[i].lastFaults_) continue;
-      M5.Lcd.setTextColor(RED, BLACK);
-      M5.Lcd.printf("[o%d:e%x]", i, drives_[i].lastFaults_);
-    }
-
-    M5.Lcd.endWrite();
+    drawLCD(now);
     lastDraw = now;
   }
 
@@ -443,3 +364,111 @@ bool Controller::updateIMU() {
   return true;
 }
 
+void Controller::drawLCD(const uint32_t now) {
+  M5.Lcd.startWrite();
+  auto bgRainbow = rainbowColor((now >> 2) % 1000 / 1000.0);
+  auto fg = BLACK;
+  auto pageBG = BLACK;
+  auto validCount = getValidDriveCount();
+
+  String title = (crsf_.isLinkUp()? "ready" : "NO LINK");
+  if (!crsf_.isLinkUp()) bgRainbow = RED;
+  if (isBalancing_) title = "balancing!";
+  if (!validCount) {
+    title = "no drives!";
+    bgRainbow = RED;
+  }
+  if (bgRainbow == RED) { fg = WHITE; pageBG = SUPERDARKRED; }
+  if (lastState_) { title = "running"; pageBG = SUPERDARKBLUE; }
+
+  //draw 2px line down left, right, and bottom of screen
+  M5.Lcd.fillRect(0, 0, 2, M5.Lcd.height(), bgRainbow); //vertical left
+  M5.Lcd.fillRect(M5.Lcd.width() - 2, 0, 2, M5.Lcd.height(), bgRainbow); //vertical right
+  M5.Lcd.fillRect(0, M5.Lcd.height() - 2, M5.Lcd.width(), 2, bgRainbow); //horizontal bottom
+
+  //show title
+  M5.Lcd.setCursor(2, 0);
+  M5.Lcd.setTextColor(fg, bgRainbow);
+  M5.Lcd.setFont(&FreeSansBold12pt7b);
+  drawCentered(title.c_str(), M5.Lcd, bgRainbow);
+  M5.Lcd.setCursor(2, M5.Lcd.getCursorY()); //indent-in 2px
+
+  if (redrawLCD_ || (now - lastClear) > 5000) {
+    auto x = M5.Lcd.getCursorX(), y = M5.Lcd.getCursorY();
+    M5.Lcd.fillRect(x, y, M5.Lcd.width() - x - 2, M5.Lcd.height() - y - 2, pageBG);
+    lastClear = now;
+    redrawLCD_ = false;
+  }
+
+  // if this has a battery, show that
+  auto power = M5.Power.getType();
+  if (power != M5.Power.pmic_unknown) {
+    M5.Lcd.setTextColor(WHITE, BLACK);
+    M5.Lcd.setFont(&FreeMono12pt7b);
+    M5.Lcd.printf(" %0.1fV\n", M5.Power.getBatteryVoltage() / 1000.0);
+  }
+
+  //next show odrive status
+#if 0
+  if (validCount) {
+    //show drive voltage
+    //TODO! can read 0X3007 vBus(mv) register for this if the driver will let us!
+    M5.Lcd.setTextColor(WHITE, BLACK);
+    M5.Lcd.setFont(&FreeSansBold18pt7b);
+    M5.Lcd.printf("%0.1fV", lastBusStatus_.Bus_Voltage);
+    M5.Lcd.setFont(&FreeSansBold9pt7b); //small
+    for (int i = 0; i < NUM_DRIVES; i++) {
+      M5.Lcd.setTextColor(WHITE, lastHeartbeatTimes_[i] > (now - 100)? DARKGREEN : RED);
+      M5.Lcd.printf("%d", i);
+    }
+    M5.Lcd.setFont(&FreeSansBold18pt7b);
+    M5.Lcd.printf("\n"); //newline with big font
+  }
+#endif
+
+  if (selectedTune_ < NUM_ADJUSTABLES) {
+    M5.Lcd.setTextColor(SUPERDARKBLUE, WHITE);
+    M5.Lcd.setFont(&FreeSansBoldOblique9pt7b);
+    auto tuneLabel = adjNames_[selectedTune_ % NUM_ADJUSTABLES];
+    String draw = tuneLabel + ":" + String(*adjustables_[selectedTune_], 2);
+    drawCentered(draw.c_str(), M5.Lcd, WHITE);
+    M5.Lcd.setCursor(2, M5.Lcd.getCursorY()); //indent-in 2px
+  }
+
+  M5.Lcd.setFont(&FreeSansBold9pt7b);
+  M5.Lcd.setTextColor(WHITE, BLACK);
+  M5.Lcd.printf(" spd %d", (uint8_t)maxSpeed_);
+  if (yawCtrlEnabled_ || isBalancing_) {
+    M5.Lcd.setTextColor(fg, bgRainbow);
+    M5.Lcd.printf(" %s", yawCtrlEnabled_? "[yaw]" : "[bal]");
+  }
+
+  //bottom aligned
+  M5.Lcd.setFont(&Font0);
+  M5.Lcd.setCursor(1, M5.Lcd.height() - 9);
+  M5.Lcd.setTextColor(WHITE, BLACK);
+  M5.Lcd.printf(" %.2f ", 1 / 1000.0 * now);
+
+  for (int i = 0; i < NUM_DRIVES; i++) {
+    if (!drives_[i].lastFaults_) continue;
+    M5.Lcd.setTextColor(RED, BLACK);
+    M5.Lcd.printf("[o%d:e%x]", i, drives_[i].lastFaults_);
+  }
+
+  M5.Lcd.endWrite();
+}
+
+void drawCentered(const char* text, M5GFX &lcd, uint16_t bg) {
+  auto titlewidth = lcd.textWidth(text);
+  auto titleheight = lcd.fontHeight();
+  auto starty = lcd.getCursorY();
+  if (titlewidth > lcd.width() - 4) {
+    lcd.setFont(&FreeMono9pt7b); //smaller
+    titlewidth = lcd.textWidth(text);
+  }
+  lcd.setCursor((lcd.width() - titlewidth) / 2, starty); //center title
+  lcd.fillRect(0, starty, lcd.getCursorX(), lcd.fontHeight(), bg);
+  lcd.print(text);
+  lcd.fillRect(lcd.getCursorX(), starty, lcd.width() - lcd.getCursorX(), lcd.fontHeight(), bg);
+  lcd.println();
+}
