@@ -30,15 +30,18 @@ class Controller {
   Madgwick imuFilt_;
   float gyroZ = 0;
   PIDCtrl yawCtrl_ = PIDCtrl(0.28, 0.08, 0.0, 10);
-  PIDCtrl balanceCtrl_ = PIDCtrl(17.0, 0.50, 0.06, 20);
+  PIDCtrl balanceCtrl_ = PIDCtrl(17.0, 0.50, 0.06, 30);
+  PIDCtrl balanceSpeedCtrl_ = PIDCtrl(12.6, 4.0, 0.0, 18);
+  float filteredFwdSpeed_ = 0.0;
+  float filteredFwdSpeedAlpha_ = 0.04;
   float maxSpeed_ = 0.0;
   bool yawCtrlEnabled_ = false;
   bool isBalancing_ = false;
   bool redrawLCD_ = false;
 
-  static const uint8_t NUM_ADJUSTABLES = 3;
-  float* adjustables_[NUM_ADJUSTABLES] = {&balanceCtrl_.P, &balanceCtrl_.I, &balanceCtrl_.D };
-  String adjNames_[NUM_ADJUSTABLES] = { "balP", "balI", "balD" };
+  static const uint8_t NUM_ADJUSTABLES = 4;
+  float* adjustables_[NUM_ADJUSTABLES] = { &filteredFwdSpeedAlpha_, &balanceSpeedCtrl_.P, &balanceSpeedCtrl_.I, &balanceSpeedCtrl_.D};
+  String adjNames_[NUM_ADJUSTABLES] = { "a", "bP", "bI", "bD" };
   uint8_t selectedTune_ = NUM_ADJUSTABLES; //none selected
 
 public:

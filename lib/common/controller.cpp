@@ -224,7 +224,7 @@ void Controller::loop() {
 
     float pitchFwd = (atan2(-R[2][0], R[2][2]) + PI / 2) * 180.0 / PI;
 
-    bool isUpOnEnd = abs(pitchFwd) < (isBalancing_? MAX_TILT * 1.4 : MAX_TILT); //more tilt allowed when balancing
+    bool isUpOnEnd = abs(pitchFwd) < (isBalancing_? MAX_TILT * 1.6 : MAX_TILT); //more tilt allowed when balancing
 
     //control inputs
     yawCtrlEnabled_ = crsf_.getChannel(6) > 1400 && crsf_.getChannel(6) < 1600;
@@ -232,7 +232,6 @@ void Controller::loop() {
     bool enableAdjustment = (yawCtrlEnabled_ || balanceModeEnabled_) && (crsf_.getChannel(8) > 1500);
     maxSpeed_ = mapfloat(crsf_.getChannel(7), 1000, 2000, 6, 30); //aux 2: speed selection
     isBalancing_ = (balanceModeEnabled_ && isUpOnEnd);
-    if (isBalancing_) maxSpeed_ = MAX_TILT;
 
     float fwd = mapfloat(crsf_.getChannel(2), 1000, 2000, -maxSpeed_, maxSpeed_);
     float side = mapfloat(crsf_.getChannel(1), 1000, 2000, -maxSpeed_, maxSpeed_);
@@ -274,15 +273,18 @@ void Controller::loop() {
       #define LEFT 2
       if (isBalancing_) {
         //balance mode
-        float pitch = pitchFwd; //endPitches[endIdx];
-        float pctrl = balanceCtrl_.update(-fwd - pitch); //goal is pitch at 0
+        float pitch = pitchFwd;
+        float pitchGoal = balanceSpeedCtrl_.update(filteredFwdSpeed_ - fwd);
+        float pctrl = balanceCtrl_.update(pitchGoal - pitch); //goal is pitch at 0
+        filteredFwdSpeed_ = filteredFwdSpeed_ * (1 - filteredFwdSpeedAlpha_) + pctrl * filteredFwdSpeedAlpha_;
         if (Serial) {
-          Serial.printf("p [%06.2f - %06.2f] ->\t%06.2f\n", fwd, pitch, pctrl);
+          Serial.printf("(speed %06.2f, fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> pctrl %06.2f\n",
+            filteredFwdSpeed_, fwd, pitchGoal, pitch, pctrl);
         }
         // if (endIdx == 0) { //fwd balancing
         fwd = pctrl;
         side = 0; //disable side
-      }
+      } else balanceSpeedCtrl_.reset();
       // yaw, fwd, side
       vels[BACK] = y  +   0   + side;
       vels[LEFT] = y  - fwd   - side * 1.33/2;
@@ -428,8 +430,8 @@ void Controller::drawLCD(const uint32_t now) {
 
   if (selectedTune_ < NUM_ADJUSTABLES) {
     M5.Lcd.setTextColor(SUPERDARKBLUE, WHITE);
-    M5.Lcd.setFont(&FreeSansBoldOblique9pt7b);
-    auto tuneLabel = adjNames_[selectedTune_ % NUM_ADJUSTABLES];
+    M5.Lcd.setFont(&FreeSansBold9pt7b);
+    auto tuneLabel = adjNames_[selectedTune_];
     String draw = tuneLabel + ":" + String(*adjustables_[selectedTune_], 2);
     drawCentered(draw.c_str(), M5.Lcd, WHITE);
     M5.Lcd.setCursor(2, M5.Lcd.getCursorY()); //indent-in 2px

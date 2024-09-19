@@ -7,6 +7,7 @@ public:
 
     float update(float error);
     void reset();
+    float getPrevOut() const { return prevOut; }
 
     float P = 0;
     float I = 0;
