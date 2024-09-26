@@ -1,8 +1,9 @@
 #include "controller.h"
 #include "utils.h"
 #include <Arduino.h>
+#ifdef IS_M5
 #include <M5Unified.h>
-#include <WiFiUdp.h>
+#endif
 
 const uint8_t DRIVE_IDS[NUM_DRIVES] = {0x7D, 0x7E, 0x7F};
 #if defined(ARDUINO_M5Stack_ATOMS3)
@@ -21,6 +22,14 @@ const uint8_t DRIVE_IDS[NUM_DRIVES] = {0x7D, 0x7E, 0x7F};
 
 #define MAX_TILT 20.0
 
+bool canPrint() {
+  #if ARDUINO_USB_CDC_ON_BOOT
+  return Serial && Serial.availableForWrite();
+  #else
+  return true;
+  #endif
+}
+
 void DriveCtx::enable(bool enable) {
   if (enable) {
     driver_.init_motor(MODE_SPEED);
@@ -34,13 +43,13 @@ void DriveCtx::enable(bool enable) {
 void DriveCtx::setSpeed(float speed) { driver_.set_speed_ref(speed); }
 
 void DriveCtx::requestStatus() {
-  if (Serial) Serial.printf("[req%x]", id_);
+  if (canPrint()) Serial.printf("[req%x]", id_);
   driver_.request_status();
 }
 
 XiaomiCyberGearStatus DriveCtx::getStatus() const { return driver_.get_status(); }
 
-bool DriveCtx::handle(twai_message_t& message) {
+bool DriveCtx::handle(const twai_message_t& message) {
   uint8_t msgtype = (message.identifier & 0xFF000000) >> 24; //bits 24-28
   uint8_t driveid = (message.identifier & 0x0000FF00) >> 8; //bits 8-15
   if (driveid != id_) return false;
@@ -49,28 +58,27 @@ bool DriveCtx::handle(twai_message_t& message) {
     lastFaults_   = (message.identifier & 0x003F0000) >> 16; //bits 16-21 = [Uncalibrated, hall, magsense, overtemp, overcurrent, undervolt]
     driver_.process_message(message);
     enabled_ = (mode == 2);
-    if (Serial) Serial.print(".");
+    if (canPrint()) Serial.print(".");
     lastStatus_ = millis();
     return true;
   } else if (msgtype == 0x12 || msgtype == 0x11) { //param set / get
     //ok!
-    if (Serial) {
-      Serial.printf("drive %x: param msg %x: {", id_, message.identifier);
+    if (canPrint()) {
       for (int i = 0; i < message.data_length_code; i++)
         Serial.printf("0x%x, ", message.data[i]);
       Serial.println("}");
     }
   } else if (msgtype == 0x15) { //fault message decimal 21
-    if (Serial) {
+    if (canPrint()) {
       Serial.printf("drive %x: fault message %x: {", id_, message.identifier);
       for (int i = 0; i < message.data_length_code; i++)
-        Serial.printf("0x%x, ", message.data[i]);
+        Serial.printf("0x%02x, ", message.data[i]);
       Serial.println("}");
     }
     return true;
   } else {
-    if (Serial)
-      Serial.printf("drive %x: unknown message type %d (header 0x%x)\n", id_, msgtype, message.identifier);
+    if (canPrint())
+      Serial.printf("drive %x: unknown message type %d (header 0x%02x)\n", id_, msgtype, message.identifier);
     return true; //still was for us ..
   }
   return false;
@@ -92,7 +100,11 @@ static Controller* controller_ = nullptr;
 void Controller::setup() {
   controller_ = this;
   //only use the virtual serial port if it's available
-  if (Serial && Serial.availableForWrite()) {
+#ifdef CONFIG_IDF_TARGET_ESP32
+  Serial.begin(115200);
+#endif
+
+  if (canPrint()) {
     Serial.begin(115200);
     Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
     Serial.println("Controller setup");
@@ -116,40 +128,30 @@ void Controller::setup() {
     drives_[i].driver_.set_position_ref(0.0); // set initial rotor position
   }
 
-  if (Serial && Serial.availableForWrite())
+  if (canPrint())
     Serial.printf("finished CAN setup\n");
 
-  // auto cfg = M5.config();
+#ifdef IS_M5
   M5.begin();
+  //check if has lcd
+  if (M5.Lcd.width() > 0) {
+    lcd_ = &M5.Lcd;
+    M5.Lcd.setRotation(2); //flip
+  }
   M5.Power.begin();
   if (M5.Imu.isEnabled()) {
     M5.Imu.loadOffsetFromNVS();
     // M5.Imu.setAxisOrderRightHanded( ??
     imuFilt_.setFrequency(50); //50Hz, 20ms
   }
+#endif
 
-  M5.Lcd.setRotation(2); //flip
-  M5.Lcd.setCursor(0, 0);
-  M5.Lcd.setTextFont(2);
-  M5.Lcd.setTextColor(WHITE, BLUE);
-  M5.Lcd.printf("  board %d | %d  ", M5.getBoard(), M5.Power.getType());
+  if (canPrint())
+    Serial.println("finished setup");
 
-  if (Serial && Serial.availableForWrite())
-    Serial.println("M5 setup");
   delay(100);
 }
 
-uint16_t rainbowColor(float v) {
-    float h = v * 6.0;
-    float x = 1.0 - fabs(fmod(h, 2.0) - 1.0);
-    return lgfx::color565(
-        (h < 1 ? 1 : h < 2 ? x : h < 4 ? 0 : h < 5 ? x : 1) * 255,
-        (h < 1 ? x : h < 3 ? 1 : h < 4 ? x : 0) * 255,
-        (h < 2 ? 0 : h < 3 ? x : h < 5 ? 1 : x) * 255
-    );
-}
-const uint16_t SUPERDARKRED = lgfx::color565(50, 0, 0);
-const uint16_t SUPERDARKBLUE = lgfx::color565(0, 0, 50);
 
 uint8_t Controller::getValidDriveCount() const {
   uint8_t validCount = 0;
@@ -167,15 +169,11 @@ uint32_t lastTxStats = 0;
 uint32_t lastClear = 0;
 
 void Controller::loop() {
-  M5.update(); //updates buttons, etc
   uint32_t now = millis();
 
   if ((now - lastPollStats) > 500) {
-    for (int i = 0; i < NUM_DRIVES; i++) {
+    for (int i = 0; i < NUM_DRIVES; i++)
       drives_[i].requestStatus();
-    }
-    //TODO read power stats from drive
-
     lastPollStats = now;
   }
 
@@ -190,7 +188,7 @@ void Controller::loop() {
     crsf_.queuePacket(CRSF_SYNC_BYTE, CRSF_FRAMETYPE_BATTERY_SENSOR, &crsfBatt, sizeof(crsfBatt));
     lastTxStats = now;
 
-    if (Serial && Serial.availableForWrite()) {
+    if (canPrint()) {
       for (int i = 0; i < NUM_DRIVES; i++) {
         Serial.printf("o%d: e%x s%d\n", i, lastHeartbeats_[i].Axis_Error, lastHeartbeats_[i].Axis_State);
       }
@@ -199,10 +197,13 @@ void Controller::loop() {
   }
 #endif
 
+  #ifdef IS_M5
+  M5.update(); //updates buttons, etc
   if (M5.BtnA.wasPressed()) {
     selectedTune_ = (selectedTune_ + 1) % (NUM_ADJUSTABLES + 1); //+1 for disabled
     redrawLCD_ = true;
   }
+  #endif
   float* tunable = selectedTune_ < NUM_ADJUSTABLES? adjustables_[selectedTune_] : NULL;
 
   if ((now - lastDrive) > 20) {
@@ -252,7 +253,7 @@ void Controller::loop() {
       //arm/disarm
       bool arm = crsf_.getChannel(5) > 1500;
       if (arm != lastState_) {
-        if (Serial && Serial.availableForWrite())
+        if (canPrint())
           Serial.printf("SETTING STATE %s\n", arm? "ARM" : "DISARM");
         for (int i = 0; i < NUM_DRIVES; i++) {
           drives_[i].enable(arm);
@@ -263,11 +264,11 @@ void Controller::loop() {
         redrawLCD_ = true;
       }
 
-      float vels[NUM_MOTORS] = {0};
+      float vels[NUM_DRIVES] = {0};
       yawCtrl_.limit = maxSpeed_; //TODO filter this
       float y = yawCtrlEnabled_? yawCtrl_.update((-yaw * 100) - gyroZ) : -yaw; //convert yaw to angular rate
 
-#if NUM_MOTORS == 3
+#if NUM_DRIVES == 3
       #define BACK 0
       #define RGHT 1
       #define LEFT 2
@@ -277,7 +278,7 @@ void Controller::loop() {
         float pitchGoal = balanceSpeedCtrl_.update(filteredFwdSpeed_ - fwd);
         float pctrl = balanceCtrl_.update(pitchGoal - pitch); //goal is pitch at 0
         filteredFwdSpeed_ = filteredFwdSpeed_ * (1 - filteredFwdSpeedAlpha_) + pctrl * filteredFwdSpeedAlpha_;
-        if (Serial) {
+        if (canPrint()) {
           Serial.printf("(speed %06.2f, fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> pctrl %06.2f\n",
             filteredFwdSpeed_, fwd, pitchGoal, pitch, pctrl);
         }
@@ -289,7 +290,7 @@ void Controller::loop() {
       vels[BACK] = y  +   0   + side;
       vels[LEFT] = y  - fwd   - side * 1.33/2;
       vels[RGHT] = y  + fwd   - side * 1.33/2;
-#elif NUM_MOTORS == 4
+#elif NUM_DRIVES == 4
       #define BK_L 0
       #define BK_R 1
       #define FR_R 2
@@ -301,13 +302,13 @@ void Controller::loop() {
       vels[FR_L] += y  +  fwd;
 
 #else
-#error "unsupported motor count, is: NUM_MOTORS"
+#error "unsupported motor count, is: NUM_DRIVES"
 #endif
       //now output the drive commands
 
       if (arm) {
         for (int i = 0; i < NUM_DRIVES; i++) {
-          if (i < NUM_MOTORS)
+          if (i < NUM_DRIVES)
             drives_[i].setSpeed(vels[i]);
         }
       }
@@ -320,7 +321,6 @@ void Controller::loop() {
   }
 
   if ((now - lastDraw) > 60 || redrawLCD_) {
-    M5.update(); //updates buttons
     drawLCD(now);
     lastDraw = now;
   }
@@ -330,7 +330,7 @@ void Controller::loop() {
   uint32_t alerts_triggered;
   twai_read_alerts(&alerts_triggered, pdMS_TO_TICKS(1));
 
-  if (Serial) {
+  if (canPrint()) {
     twai_status_info_t twai_status;
     twai_get_status_info(&twai_status);
     if (alerts_triggered & TWAI_ALERT_ERR_PASS)
@@ -341,7 +341,7 @@ void Controller::loop() {
       Serial.printf("CAN transmission failed! buffered: %d, error: %d, failed: %d", twai_status.msgs_to_tx, twai_status.tx_error_counter, twai_status.tx_failed_count);
   }
   if (alerts_triggered & TWAI_ALERT_RX_DATA) {
-    twai_message_t message;
+    twai_message_t message = {0};
     while (twai_receive(&message, 0) == ESP_OK) {
       bool handled = false;
       for (int i = 0; i < NUM_DRIVES; i++) {
@@ -351,7 +351,7 @@ void Controller::loop() {
       if (!handled && Serial) {
         Serial.printf("unhandled message id=%x len=%d: {", message.identifier, message.data_length_code);
         for (int i = 0; i < message.data_length_code; i++)
-          Serial.printf("0x%x, ", message.data[i]);
+          Serial.printf("0x%02x, ", message.data[i]);
         Serial.println("}");
       }
     }
@@ -359,15 +359,29 @@ void Controller::loop() {
 }
 
 bool Controller::updateIMU() {
+#ifdef IS_M5
   auto res = M5.Imu.isEnabled()? M5.Imu.update() : 0;
   if (!res) return false;
   auto data = M5.Imu.getImuData(); //no mag data it seems, sadly
   imuFilt_.updateIMU<0,'D'>(-data.gyro.y, -data.gyro.x, -data.gyro.z, data.accel.y, data.accel.x, data.accel.z); //acc x/y are swapped
+#endif
   return true;
 }
 
+uint16_t rainbowColor(float v) {
+    float h = v * 6.0;
+    float x = 1.0 - fabs(fmod(h, 2.0) - 1.0);
+    return lgfx::color565(
+        (h < 1 ? 1 : h < 2 ? x : h < 4 ? 0 : h < 5 ? x : 1) * 255,
+        (h < 1 ? x : h < 3 ? 1 : h < 4 ? x : 0) * 255,
+        (h < 2 ? 0 : h < 3 ? x : h < 5 ? 1 : x) * 255
+    );
+}
+const uint16_t SUPERDARKRED = lgfx::color565(50, 0, 0);
+const uint16_t SUPERDARKBLUE = lgfx::color565(0, 0, 50);
+
 void Controller::drawLCD(const uint32_t now) {
-  M5.Lcd.startWrite();
+  lcd_->startWrite();
   auto bgRainbow = rainbowColor((now >> 2) % 1000 / 1000.0);
   auto fg = BLACK;
   auto pageBG = BLACK;
@@ -384,20 +398,20 @@ void Controller::drawLCD(const uint32_t now) {
   if (lastState_) { title = "running"; pageBG = SUPERDARKBLUE; }
 
   //draw 2px line down left, right, and bottom of screen
-  M5.Lcd.fillRect(0, 0, 2, M5.Lcd.height(), bgRainbow); //vertical left
-  M5.Lcd.fillRect(M5.Lcd.width() - 2, 0, 2, M5.Lcd.height(), bgRainbow); //vertical right
-  M5.Lcd.fillRect(0, M5.Lcd.height() - 2, M5.Lcd.width(), 2, bgRainbow); //horizontal bottom
+  lcd_->fillRect(0, 0, 2, lcd_->height(), bgRainbow); //vertical left
+  lcd_->fillRect(lcd_->width() - 2, 0, 2, lcd_->height(), bgRainbow); //vertical right
+  lcd_->fillRect(0, lcd_->height() - 2, lcd_->width(), 2, bgRainbow); //horizontal bottom
 
   //show title
-  M5.Lcd.setCursor(2, 0);
-  M5.Lcd.setTextColor(fg, bgRainbow);
-  M5.Lcd.setFont(&FreeSansBold12pt7b);
-  drawCentered(title.c_str(), M5.Lcd, bgRainbow);
-  M5.Lcd.setCursor(2, M5.Lcd.getCursorY()); //indent-in 2px
+  lcd_->setCursor(2, 0);
+  lcd_->setTextColor(fg, bgRainbow);
+  lcd_->setFont(&FreeSansBold12pt7b);
+  drawCentered(title.c_str(), lcd_, bgRainbow);
+  lcd_->setCursor(2, lcd_->getCursorY()); //indent-in 2px
 
   if (redrawLCD_ || (now - lastClear) > 5000) {
-    auto x = M5.Lcd.getCursorX(), y = M5.Lcd.getCursorY();
-    M5.Lcd.fillRect(x, y, M5.Lcd.width() - x - 2, M5.Lcd.height() - y - 2, pageBG);
+    auto x = lcd_->getCursorX(), y = lcd_->getCursorY();
+    lcd_->fillRect(x, y, lcd_->width() - x - 2, lcd_->height() - y - 2, pageBG);
     lastClear = now;
     redrawLCD_ = false;
   }
@@ -405,9 +419,9 @@ void Controller::drawLCD(const uint32_t now) {
   // if this has a battery, show that
   auto power = M5.Power.getType();
   if (power != M5.Power.pmic_unknown) {
-    M5.Lcd.setTextColor(WHITE, BLACK);
-    M5.Lcd.setFont(&FreeMono12pt7b);
-    M5.Lcd.printf(" %0.1fV\n", M5.Power.getBatteryVoltage() / 1000.0);
+    lcd_->setTextColor(WHITE, BLACK);
+    lcd_->setFont(&FreeMono12pt7b);
+    lcd_->printf(" %0.1fV\n", M5.Power.getBatteryVoltage() / 1000.0);
   }
 
   //next show odrive status
@@ -433,7 +447,7 @@ void Controller::drawLCD(const uint32_t now) {
     M5.Lcd.setFont(&FreeSansBold9pt7b);
     auto tuneLabel = adjNames_[selectedTune_];
     String draw = tuneLabel + ":" + String(*adjustables_[selectedTune_], 2);
-    drawCentered(draw.c_str(), M5.Lcd, WHITE);
+    drawCentered(draw.c_str(), lcd_, WHITE);
     M5.Lcd.setCursor(2, M5.Lcd.getCursorY()); //indent-in 2px
   }
 
@@ -460,17 +474,19 @@ void Controller::drawLCD(const uint32_t now) {
   M5.Lcd.endWrite();
 }
 
-void drawCentered(const char* text, M5GFX &lcd, uint16_t bg) {
-  auto titlewidth = lcd.textWidth(text);
-  auto titleheight = lcd.fontHeight();
-  auto starty = lcd.getCursorY();
-  if (titlewidth > lcd.width() - 4) {
-    lcd.setFont(&FreeMono9pt7b); //smaller
-    titlewidth = lcd.textWidth(text);
+void drawCentered(const char* text, lgfx::v1::LGFX_Device* lcd, uint16_t bg) {
+  if (!lcd) return;
+  auto titlewidth = lcd->textWidth(text);
+  auto titleheight = lcd->fontHeight();
+  auto starty = lcd->getCursorY();
+  if (titlewidth > lcd->width() - 4) {
+    lcd->setFont(&FreeMono9pt7b); //smaller
+    titlewidth = lcd->textWidth(text);
   }
-  lcd.setCursor((lcd.width() - titlewidth) / 2, starty); //center title
-  lcd.fillRect(0, starty, lcd.getCursorX(), lcd.fontHeight(), bg);
-  lcd.print(text);
-  lcd.fillRect(lcd.getCursorX(), starty, lcd.width() - lcd.getCursorX(), lcd.fontHeight(), bg);
-  lcd.println();
+  lcd->setCursor((lcd->width() - titlewidth) / 2, starty); //center title
+  lcd->fillRect(0, starty, lcd->getCursorX(), lcd->fontHeight(), bg);
+  lcd->print(text);
+  lcd->fillRect(lcd->getCursorX(), starty, lcd->width() - lcd->getCursorX(), lcd->fontHeight(), bg);
+  lcd->println();
 }
+

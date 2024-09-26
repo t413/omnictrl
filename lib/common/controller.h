@@ -6,7 +6,10 @@
 #include <MadgwickAHRS.h>
 #include <xiaomi_cybergear_driver.h>
 
-#define NUM_DRIVES 3
+namespace lgfx { inline namespace v1 { class LGFX_Device; } }
+#ifndef NUM_DRIVES
+#error "NUM_DRIVES must be defined in ini"
+#endif
 
 struct DriveCtx {
   uint8_t id_ = 0;
@@ -17,7 +20,7 @@ struct DriveCtx {
   void requestStatus();
   void enable(bool enable);
   void setSpeed(float speed);
-  bool handle(twai_message_t& message);
+  bool handle(const twai_message_t& message);
   XiaomiCyberGearStatus getStatus() const;
 };
 
@@ -38,6 +41,7 @@ class Controller {
   bool yawCtrlEnabled_ = false;
   bool isBalancing_ = false;
   bool redrawLCD_ = false;
+  lgfx::v1::LGFX_Device* lcd_ = nullptr;
 
   static const uint8_t NUM_ADJUSTABLES = 4;
   float* adjustables_[NUM_ADJUSTABLES] = { &filteredFwdSpeedAlpha_, &balanceSpeedCtrl_.P, &balanceSpeedCtrl_.I, &balanceSpeedCtrl_.D};
@@ -58,7 +62,4 @@ public:
   const String version_;
 };
 
-namespace m5gfx {
-  class M5GFX;
-}
-void drawCentered(const char* text, m5gfx::M5GFX &Lcd, uint16_t bg);
+void drawCentered(const char* text, lgfx::v1::LGFX_Device*, uint16_t bg);
