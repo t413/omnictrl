@@ -4,28 +4,15 @@
 #include <WString.h>
 #include <AlfredoCRSF.h>
 #include <MadgwickAHRS.h>
-#include <xiaomi_cybergear_driver.h>
+#include <motordrive.h>
 
 namespace lgfx { inline namespace v1 { class LGFX_Device; } }
 #ifndef NUM_DRIVES
 #error "NUM_DRIVES must be defined in ini"
 #endif
 
-struct DriveCtx {
-  uint8_t id_ = 0;
-  XiaomiCyberGearDriver driver_;
-  uint8_t lastFaults_ = 0;
-  uint32_t lastStatus_ = 0;
-  bool enabled_ = false;
-  void requestStatus();
-  void enable(bool enable);
-  void setSpeed(float speed);
-  bool handle(const twai_message_t& message);
-  XiaomiCyberGearStatus getStatus() const;
-};
-
 class Controller {
-  DriveCtx drives_[NUM_DRIVES];
+  MotorDrive* drives_[NUM_DRIVES];
 
   AlfredoCRSF crsf_;
   int8_t lastState_ = -1;

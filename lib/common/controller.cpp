@@ -1,6 +1,8 @@
 #include "controller.h"
 #include "utils.h"
 #include <Arduino.h>
+#include <cybergear.h>
+#include <can_esp32_twai.h>
 #ifdef IS_M5
 #include <M5Unified.h>
 #endif
@@ -30,59 +32,8 @@ bool canPrint() {
   #endif
 }
 
-void DriveCtx::enable(bool enable) {
-  if (enable) {
-    driver_.init_motor(MODE_SPEED);
-    driver_.enable_motor();
-  } else {
-    driver_.set_speed_ref(0.0);
-    driver_.stop_motor();
-  }
-}
 
-void DriveCtx::setSpeed(float speed) { driver_.set_speed_ref(speed); }
-
-void DriveCtx::requestStatus() {
-  if (canPrint()) Serial.printf("[req%x]", id_);
-  driver_.request_status();
-}
-
-XiaomiCyberGearStatus DriveCtx::getStatus() const { return driver_.get_status(); }
-
-bool DriveCtx::handle(const twai_message_t& message) {
-  uint8_t msgtype = (message.identifier & 0xFF000000) >> 24; //bits 24-28
-  uint8_t driveid = (message.identifier & 0x0000FF00) >> 8; //bits 8-15
-  if (driveid != id_) return false;
-  if (msgtype == CMD_REQUEST) {
-    uint8_t mode  = (message.identifier & 0x00C00000) >> 22; //bits 22-23 = [mode]
-    lastFaults_   = (message.identifier & 0x003F0000) >> 16; //bits 16-21 = [Uncalibrated, hall, magsense, overtemp, overcurrent, undervolt]
-    driver_.process_message(message);
-    enabled_ = (mode == 2);
-    if (canPrint()) Serial.print(".");
-    lastStatus_ = millis();
-    return true;
-  } else if (msgtype == 0x12 || msgtype == 0x11) { //param set / get
-    //ok!
-    if (canPrint()) {
-      for (int i = 0; i < message.data_length_code; i++)
-        Serial.printf("0x%x, ", message.data[i]);
-      Serial.println("}");
-    }
-  } else if (msgtype == 0x15) { //fault message decimal 21
-    if (canPrint()) {
-      Serial.printf("drive %x: fault message %x: {", id_, message.identifier);
-      for (int i = 0; i < message.data_length_code; i++)
-        Serial.printf("0x%02x, ", message.data[i]);
-      Serial.println("}");
-    }
-    return true;
-  } else {
-    if (canPrint())
-      Serial.printf("drive %x: unknown message type %d (header 0x%02x)\n", id_, msgtype, message.identifier);
-    return true; //still was for us ..
-  }
-  return false;
-}
+CanEsp32Twai twaiInterface_;
 
 
 // -------------------- //
@@ -99,14 +50,13 @@ static Controller* controller_ = nullptr;
 
 void Controller::setup() {
   controller_ = this;
-  //only use the virtual serial port if it's available
 #ifdef CONFIG_IDF_TARGET_ESP32
   Serial.begin(115200);
 #endif
 
-  if (canPrint()) {
     Serial.begin(115200);
     Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
+  if (canPrint()) { //only use the virtual serial port if it's available
     Serial.println("Controller setup");
     Serial.flush();
   }
@@ -115,17 +65,15 @@ void Controller::setup() {
   Serial1.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_CRSF_RX, PIN_CRSF_TX);
   crsf_.begin(Serial1);
 
+  twaiInterface_.setup(PIN_CAN_RX, PIN_CAN_TX, &Serial);
 
   for (int i = 0; i < NUM_DRIVES; i++) {
-    drives_[i].id_ = DRIVE_IDS[i];
-    drives_[i].driver_ = XiaomiCyberGearDriver(drives_[i].id_, 0x00); //id, master id
+    drives_[i] = new CyberGearDriver(DRIVE_IDS[i], &twaiInterface_);
   }
 
-  drives_[0].driver_.init_twai(PIN_CAN_RX, PIN_CAN_TX);
-
   for (int i = 0; i < NUM_DRIVES; i++) {
-    drives_[i].enable(false); //disable all drives
-    drives_[i].driver_.set_position_ref(0.0); // set initial rotor position
+    drives_[i]->enable(false); //disable all drives
+    // drives_[i]->driver_.set_position_ref(0.0); // set initial rotor position
   }
 
   if (canPrint())
@@ -156,7 +104,7 @@ void Controller::setup() {
 uint8_t Controller::getValidDriveCount() const {
   uint8_t validCount = 0;
   for (int i = 0; i < NUM_DRIVES; i++) {
-    bool hasRecent = (millis() - drives_[i].lastStatus_) < 1000;
+    bool hasRecent = (millis() - drives_[i]->getLastStatusTime()) < 1000;
     if (hasRecent) validCount++;
   }
   return validCount;
@@ -173,7 +121,7 @@ void Controller::loop() {
 
   if ((now - lastPollStats) > 500) {
     for (int i = 0; i < NUM_DRIVES; i++)
-      drives_[i].requestStatus();
+      drives_[i]->requestStatus();
     lastPollStats = now;
   }
 
@@ -256,7 +204,8 @@ void Controller::loop() {
         if (canPrint())
           Serial.printf("SETTING STATE %s\n", arm? "ARM" : "DISARM");
         for (int i = 0; i < NUM_DRIVES; i++) {
-          drives_[i].enable(arm);
+          drives_[i]->setModeSpeed();
+          drives_[i]->enable(arm);
           yawCtrl_.reset();
           balanceCtrl_.reset();
         }
@@ -309,7 +258,7 @@ void Controller::loop() {
       if (arm) {
         for (int i = 0; i < NUM_DRIVES; i++) {
           if (i < NUM_DRIVES)
-            drives_[i].setSpeed(vels[i]);
+            drives_[i]->setSpeed(vels[i]);
         }
       }
 
@@ -327,33 +276,18 @@ void Controller::loop() {
 
   crsf_.update();
 
-  uint32_t alerts_triggered;
-  twai_read_alerts(&alerts_triggered, pdMS_TO_TICKS(1));
-
-  if (canPrint()) {
-    twai_status_info_t twai_status;
-    twai_get_status_info(&twai_status);
-    if (alerts_triggered & TWAI_ALERT_ERR_PASS)
-      Serial.println("CAN Error: TWAI controller has become error passive.");
-    if (alerts_triggered & TWAI_ALERT_BUS_ERROR)
-      Serial.printf("CAN bus error count: %d\n", twai_status.bus_error_count);
-    if (alerts_triggered & TWAI_ALERT_TX_FAILED)
-      Serial.printf("CAN transmission failed! buffered: %d, error: %d, failed: %d", twai_status.msgs_to_tx, twai_status.tx_error_counter, twai_status.tx_failed_count);
-  }
-  if (alerts_triggered & TWAI_ALERT_RX_DATA) {
-    twai_message_t message = {0};
-    while (twai_receive(&message, 0) == ESP_OK) {
-      bool handled = false;
-      for (int i = 0; i < NUM_DRIVES; i++) {
-        if (drives_[i].handle(message))
-          handled = true;
-      }
-      if (!handled && Serial) {
-        Serial.printf("unhandled message id=%x len=%d: {", message.identifier, message.data_length_code);
-        for (int i = 0; i < message.data_length_code; i++)
-          Serial.printf("0x%02x, ", message.data[i]);
-        Serial.println("}");
-      }
+  while (twaiInterface_.available()) {
+    CanMessage message = twaiInterface_.readOne();
+    bool handled = false;
+    for (int i = 0; i < NUM_DRIVES; i++) {
+      if (drives_[i]->handleIncoming(message.id, message.data, message.len, now))
+        handled = true;
+    }
+    if (!handled && Serial) {
+      Serial.printf("unhandled message id=%x len=%d: {", message.id, message.len);
+      for (int i = 0; i < message.len; i++)
+        Serial.printf("0x%02x, ", message.data[i]);
+      Serial.println("}");
     }
   }
 }
@@ -466,9 +400,9 @@ void Controller::drawLCD(const uint32_t now) {
   M5.Lcd.printf(" %.2f ", 1 / 1000.0 * now);
 
   for (int i = 0; i < NUM_DRIVES; i++) {
-    if (!drives_[i].lastFaults_) continue;
+    if (!drives_[i]->getLastFaults()) continue;
     M5.Lcd.setTextColor(RED, BLACK);
-    M5.Lcd.printf("[o%d:e%x]", i, drives_[i].lastFaults_);
+    M5.Lcd.printf("[o%d:e%x]", i, drives_[i]->getLastFaults());
   }
 
   M5.Lcd.endWrite();
