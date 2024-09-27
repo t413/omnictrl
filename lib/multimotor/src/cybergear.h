@@ -28,7 +28,7 @@ public:
     void setPos(float pos) override;
     bool handleIncoming(uint32_t id, uint8_t* data, uint8_t len, uint32_t now) override;
     uint32_t getLastStatusTime() const override { return lastStatusTime_; }
-    uint8_t getLastFaults() const override { return lastFaults_; }
+    uint32_t getLastFaults() const override { return lastFaults_; }
 
     void setMode(CyberGearMode mode);
 };
