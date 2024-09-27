@@ -23,6 +23,20 @@ enum Addresses {
 
 CyberGearDriver::CyberGearDriver(uint8_t id, CanInterface* can) : id_(id), can_(can) { }
 
+int16_t CyberGearDriver::getValidDriveIDFromMsg(uint32_t canID, const uint8_t* data, uint8_t len) {
+    if (len != 8) return -1;
+    uint8_t id = canID & 0xFF;
+    uint8_t cmd = (canID >> 24) & 0xFF;
+    if (!id || !cmd) return -1;
+    if (cmd == CmdRequest) //TODO .. others?
+        return id;
+    return -1;
+}
+
+String CyberGearDriver::getName() const {
+    return String("CyberGear") + String(id_);
+}
+
 uint32_t mkID(uint8_t cmd, uint8_t opthi, uint8_t optlo, uint8_t id) {
     return (cmd << 24) | (opthi << 16) | (optlo << 8) | id;
 }
@@ -54,7 +68,7 @@ void CyberGearDriver::setSpeed(float speed) {
     if (can_) can_->send(mkID(CmdRamWrite, 0, 0, id_), data, 8);
 }
 
-bool CyberGearDriver::handleIncoming(uint32_t id, uint8_t* data, uint8_t len, uint32_t now) {
+bool CyberGearDriver::handleIncoming(uint32_t id, const uint8_t* data, uint8_t len, uint32_t now) {
     uint8_t msgtype = (id & 0xFF000000) >> 24; //bits 24-28
     uint8_t driveid = (id & 0x0000FF00) >> 8; //bits 8-15
     if (driveid != id_) return false;

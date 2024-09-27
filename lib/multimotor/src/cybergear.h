@@ -17,8 +17,11 @@ class CyberGearDriver : public MotorDrive {
     bool enabled_ = false;
 public:
     CyberGearDriver(uint8_t id, CanInterface* can);
+    static int16_t getValidDriveIDFromMsg(uint32_t canID, const uint8_t* data, uint8_t len);
 
     //contract
+    uint8_t getID() const override { return id_; }
+    virtual String getName() const;
     void requestStatus() override;
     virtual void setModePosition() { setMode(CyberGearMode::Position); }
     virtual void setModeSpeed() { setMode(CyberGearMode::Speed); }
@@ -26,7 +29,7 @@ public:
     void enable(bool enable) override;
     void setSpeed(float speed) override;
     void setPos(float pos) override;
-    bool handleIncoming(uint32_t id, uint8_t* data, uint8_t len, uint32_t now) override;
+    bool handleIncoming(uint32_t id, const uint8_t* data, uint8_t len, uint32_t now) override;
     uint32_t getLastStatusTime() const override { return lastStatusTime_; }
     uint32_t getLastFaults() const override { return lastFaults_; }
 

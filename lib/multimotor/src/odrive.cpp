@@ -35,6 +35,21 @@ enum class CmdIDs : uint8_t {
 
 ODriveDriver::ODriveDriver(uint8_t id, CanInterface* can) : id_(id), can_(can) { }
 
+int16_t ODriveDriver::getValidDriveIDFromMsg(uint32_t canID, const uint8_t* data, uint8_t len) {
+    if (len != 8) return -1;
+    uint8_t id = canID >> 5;
+    CmdIDs cmd = (CmdIDs) (canID & 0x1F);
+    if (id <= 1) return -1; //invalid ID
+    if (canID & 0xFFFFF800) return -1; //has extended frame ID bits! not ours
+    if (cmd == CmdIDs::Heartbeat || cmd == CmdIDs::GetEncoderEstimates || cmd == CmdIDs::GetBusVoltageCurrent)
+        return id;
+    return -1;
+}
+
+String ODriveDriver::getName() const {
+    return String("ODrive") + String(id_);
+}
+
 uint16_t mkID(uint8_t id, CmdIDs cmd) {
     return (id << 4) | (uint16_t) cmd;
 }
@@ -80,7 +95,7 @@ void ODriveDriver::setSpeed(float speed) {
     send(CmdIDs::SetInputVel, p.bytes);
 }
 
-bool ODriveDriver::handleIncoming(uint32_t id, uint8_t* data, uint8_t len, uint32_t now) {
+bool ODriveDriver::handleIncoming(uint32_t id, const uint8_t* data, uint8_t len, uint32_t now) {
     uint8_t inCanId = id >> 5;
     if (inCanId != id_) return false;
     CmdIDs cmd = (CmdIDs) (id & 0x1F);

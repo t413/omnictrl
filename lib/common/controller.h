@@ -7,12 +7,11 @@
 #include <motordrive.h>
 
 namespace lgfx { inline namespace v1 { class LGFX_Device; } }
-#ifndef NUM_DRIVES
-#error "NUM_DRIVES must be defined in ini"
-#endif
+constexpr uint8_t MAX_DRIVES = 8;
+struct CanMessage;
 
 class Controller {
-  MotorDrive* drives_[NUM_DRIVES];
+  MotorDrive* drives_[MAX_DRIVES] = {nullptr};
 
   AlfredoCRSF crsf_;
   int8_t lastState_ = -1;
@@ -42,8 +41,10 @@ public:
   void setup();
   void loop();
 
-  uint8_t getValidDriveCount() const;
+  uint8_t getValidDriveCount(uint32_t validTime = 500) const;
+  MotorDrive* add(MotorDrive* drive);
 
+  void handleCAN(const CanMessage& msg, uint32_t now);
   void drawLCD(const uint32_t);
   bool updateIMU();
   const String version_;

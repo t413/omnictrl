@@ -2,12 +2,12 @@
 #include "utils.h"
 #include <Arduino.h>
 #include <cybergear.h>
+#include <odrive.h>
 #include <can_esp32_twai.h>
 #ifdef IS_M5
 #include <M5Unified.h>
 #endif
 
-const uint8_t DRIVE_IDS[NUM_DRIVES] = {0x7D, 0x7E, 0x7F};
 #if defined(ARDUINO_M5Stack_ATOMS3)
 #define PIN_CRSF_RX 5
 #define PIN_CRSF_TX 6
@@ -23,6 +23,7 @@ const uint8_t DRIVE_IDS[NUM_DRIVES] = {0x7D, 0x7E, 0x7F};
 #endif
 
 #define MAX_TILT 20.0
+constexpr uint8_t CYBERGEAR_START_ADDR = 0x7D;
 
 bool canPrint() {
   #if ARDUINO_USB_CDC_ON_BOOT
@@ -44,6 +45,8 @@ Controller::~Controller() { }
 
 Controller::Controller(String version) :
         version_(version) {
+    for (uint8_t i = 0; i < MAX_DRIVES; i++)
+        drives_[i] = nullptr;
 }
 
 static Controller* controller_ = nullptr;
@@ -66,15 +69,6 @@ void Controller::setup() {
   crsf_.begin(Serial1);
 
   twaiInterface_.setup(PIN_CAN_RX, PIN_CAN_TX, &Serial);
-
-  for (int i = 0; i < NUM_DRIVES; i++) {
-    drives_[i] = new CyberGearDriver(DRIVE_IDS[i], &twaiInterface_);
-  }
-
-  for (int i = 0; i < NUM_DRIVES; i++) {
-    drives_[i]->enable(false); //disable all drives
-    // drives_[i]->driver_.set_position_ref(0.0); // set initial rotor position
-  }
 
   if (canPrint())
     Serial.printf("finished CAN setup\n");
@@ -101,13 +95,21 @@ void Controller::setup() {
 }
 
 
-uint8_t Controller::getValidDriveCount() const {
+uint8_t Controller::getValidDriveCount(uint32_t validTime) const {
   uint8_t validCount = 0;
-  for (int i = 0; i < NUM_DRIVES; i++) {
-    bool hasRecent = (millis() - drives_[i]->getLastStatusTime()) < 1000;
+  for (int i = 0; i < MAX_DRIVES; i++) {
+    if (!drives_[i]) break;
+    bool hasRecent = (validTime == 0) || (millis() - drives_[i]->getLastStatusTime()) < validTime;
     if (hasRecent) validCount++;
   }
   return validCount;
+}
+
+MotorDrive* Controller::add(MotorDrive* drive) {
+  for (int i = 0; i < MAX_DRIVES; i++)
+    if (!drives_[i])
+      return drives_[i] = drive;
+  return nullptr;
 }
 
 uint32_t lastDraw = 0;
@@ -120,8 +122,18 @@ void Controller::loop() {
   uint32_t now = millis();
 
   if ((now - lastPollStats) > 500) {
-    for (int i = 0; i < NUM_DRIVES; i++)
-      drives_[i]->requestStatus();
+    uint8_t validCount = 0;
+    for (int i = 0; i < MAX_DRIVES; i++)
+      if (drives_[i]) {
+        drives_[i]->requestStatus();
+        validCount++;
+      }
+    if (validCount < 3) {
+      if (canPrint())
+        Serial.printf("only %d drives! trying to query.\n", validCount);
+      CyberGearDriver requester(CYBERGEAR_START_ADDR + validCount, &twaiInterface_);
+      requester.requestStatus();
+    }
     lastPollStats = now;
   }
 
@@ -196,14 +208,17 @@ void Controller::loop() {
     }
 
     //main control loop
-    if (getValidDriveCount()) { //at least one
+    auto validc = getValidDriveCount();
+    if (validc) { //at least one
 
       //arm/disarm
       bool arm = crsf_.getChannel(5) > 1500;
       if (arm != lastState_) {
         if (canPrint())
           Serial.printf("SETTING STATE %s\n", arm? "ARM" : "DISARM");
-        for (int i = 0; i < NUM_DRIVES; i++) {
+        for (int i = 0; i < MAX_DRIVES; i++) {
+          if (!drives_[i]) break;
+          if (drives_[i]->getLastStatusTime() > 1000) continue; //skip invalid drives
           drives_[i]->setModeSpeed();
           drives_[i]->enable(arm);
           yawCtrl_.reset();
@@ -213,58 +228,62 @@ void Controller::loop() {
         redrawLCD_ = true;
       }
 
-      float vels[NUM_DRIVES] = {0};
+      float vels[MAX_DRIVES] = {0};
       yawCtrl_.limit = maxSpeed_; //TODO filter this
       float y = yawCtrlEnabled_? yawCtrl_.update((-yaw * 100) - gyroZ) : -yaw; //convert yaw to angular rate
 
-#if NUM_DRIVES == 3
-      #define BACK 0
-      #define RGHT 1
-      #define LEFT 2
-      if (isBalancing_) {
-        //balance mode
-        float pitch = pitchFwd;
-        float pitchGoal = balanceSpeedCtrl_.update(filteredFwdSpeed_ - fwd);
-        float pctrl = balanceCtrl_.update(pitchGoal - pitch); //goal is pitch at 0
-        filteredFwdSpeed_ = filteredFwdSpeed_ * (1 - filteredFwdSpeedAlpha_) + pctrl * filteredFwdSpeedAlpha_;
-        if (canPrint()) {
-          Serial.printf("(speed %06.2f, fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> pctrl %06.2f\n",
-            filteredFwdSpeed_, fwd, pitchGoal, pitch, pctrl);
-        }
-        // if (endIdx == 0) { //fwd balancing
-        fwd = pctrl;
-        side = 0; //disable side
-      } else balanceSpeedCtrl_.reset();
-      // yaw, fwd, side
-      vels[BACK] = y  +   0   + side;
-      vels[LEFT] = y  - fwd   - side * 1.33/2;
-      vels[RGHT] = y  + fwd   - side * 1.33/2;
-#elif NUM_DRIVES == 4
-      #define BK_L 0
-      #define BK_R 1
-      #define FR_R 2
-      #define FR_L 3
-      // yaw, fwd
-      vels[BK_L] += y  +  fwd;
-      vels[BK_R] += y  -  fwd;
-      vels[FR_R] += y  -  fwd;
-      vels[FR_L] += y  +  fwd;
-
-#else
-#error "unsupported motor count, is: NUM_DRIVES"
-#endif
+      if (validc == 3) {
+        #define BACK 0
+        #define RGHT 1
+        #define LEFT 2
+        if (isBalancing_) {
+          //balance mode
+          float pitch = pitchFwd;
+          float pitchGoal = balanceSpeedCtrl_.update(filteredFwdSpeed_ - fwd);
+          float pctrl = balanceCtrl_.update(pitchGoal - pitch); //goal is pitch at 0
+          filteredFwdSpeed_ = filteredFwdSpeed_ * (1 - filteredFwdSpeedAlpha_) + pctrl * filteredFwdSpeedAlpha_;
+          if (canPrint()) {
+            Serial.printf("(speed %06.2f, fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> pctrl %06.2f\n",
+              filteredFwdSpeed_, fwd, pitchGoal, pitch, pctrl);
+          }
+          // if (endIdx == 0) { //fwd balancing
+          fwd = pctrl;
+          side = 0; //disable side
+        } else balanceSpeedCtrl_.reset();
+        // yaw, fwd, side
+        vels[BACK] = y  +   0   + side;
+        vels[LEFT] = y  - fwd   - side * 1.33/2;
+        vels[RGHT] = y  + fwd   - side * 1.33/2;
+      } else if (validc == 4) {
+        #define BK_L 0
+        #define BK_R 1
+        #define FR_R 2
+        #define FR_L 3
+        // yaw, fwd
+        vels[BK_L] += y  +  fwd;
+        vels[BK_R] += y  -  fwd;
+        vels[FR_R] += y  -  fwd;
+        vels[FR_L] += y  +  fwd;
+      } else {
+        Serial.printf("- invalid drive count: %d\n", validc);
+      }
       //now output the drive commands
 
       if (arm) {
-        for (int i = 0; i < NUM_DRIVES; i++) {
-          if (i < NUM_DRIVES)
-            drives_[i]->setSpeed(vels[i]);
+        for (int i = 0; i < MAX_DRIVES; i++) {
+          if (!drives_[i]) break;
+          drives_[i]->setSpeed(vels[i]);
         }
       }
 
-      if (lastLinkUp_ != crsf_.isLinkUp())
+      if (lastLinkUp_ != crsf_.isLinkUp()) {
         redrawLCD_ = true;
-      lastLinkUp_ = crsf_.isLinkUp();
+        if (!crsf_.isLinkUp()) //link down! stop all drives
+          for (int i = 0; i < MAX_DRIVES; i++)
+            if (drives_[i])
+              drives_[i]->enable(false);
+        lastLinkUp_ = crsf_.isLinkUp();
+      }
     } // validCount
     lastDrive = now;
   }
@@ -278,17 +297,30 @@ void Controller::loop() {
 
   while (twaiInterface_.available()) {
     CanMessage message = twaiInterface_.readOne();
-    bool handled = false;
-    for (int i = 0; i < NUM_DRIVES; i++) {
-      if (drives_[i]->handleIncoming(message.id, message.data, message.len, now))
-        handled = true;
-    }
-    if (!handled && Serial) {
-      Serial.printf("unhandled message id=%x len=%d: {", message.id, message.len);
-      for (int i = 0; i < message.len; i++)
-        Serial.printf("0x%02x, ", message.data[i]);
-      Serial.println("}");
-    }
+    handleCAN(message, now);
+  }
+}
+
+void Controller::handleCAN(const CanMessage& msg, uint32_t now) {
+  for (int i = 0; i < MAX_DRIVES; i++) {
+    if (drives_[i] && drives_[i]->handleIncoming(msg.id, msg.data, msg.len, now))
+      return; //handled!
+  }
+  if (canPrint()) { //fallthrough to print unhandled
+    Serial.printf("> rx id=0x%x len=%d: {", msg.id, msg.len);
+    for (int i = 0; i < msg.len; i++)
+      Serial.printf("0x%02x, ", msg.data[i]);
+    Serial.println("}");
+  }
+  if (now < 2000) return; //skip during init
+  auto odid = ODriveDriver::getValidDriveIDFromMsg(msg.id, msg.data, msg.len);
+  auto cgid = CyberGearDriver::getValidDriveIDFromMsg(msg.id, msg.data, msg.len);
+  if (odid >= 0) {
+    if (canPrint()) Serial.printf("found new valid odrive id %d\n", odid);
+    add(new ODriveDriver(odid, &twaiInterface_))->enable(false);
+  } else if (cgid >= 0) {
+    if (canPrint()) Serial.printf("found new valid drive id %d\n", cgid);
+    add(new CyberGearDriver(cgid, &twaiInterface_))->enable(false);
   }
 }
 
@@ -319,17 +351,17 @@ void Controller::drawLCD(const uint32_t now) {
   auto bgRainbow = rainbowColor((now >> 2) % 1000 / 1000.0);
   auto fg = BLACK;
   auto pageBG = BLACK;
-  auto validCount = getValidDriveCount();
+  auto validCount = getValidDriveCount(0);
 
   String title = (crsf_.isLinkUp()? "ready" : "NO LINK");
   if (!crsf_.isLinkUp()) bgRainbow = RED;
   if (isBalancing_) title = "balancing!";
-  if (!validCount) {
-    title = "no drives!";
+  if (validCount < 3) {
+    title = String(validCount) + " drives!";
     bgRainbow = RED;
   }
   if (bgRainbow == RED) { fg = WHITE; pageBG = SUPERDARKRED; }
-  if (lastState_) { title = "running"; pageBG = SUPERDARKBLUE; }
+  if (lastState_ > 0) { title = "running"; pageBG = SUPERDARKBLUE; }
 
   //draw 2px line down left, right, and bottom of screen
   lcd_->fillRect(0, 0, 2, lcd_->height(), bgRainbow); //vertical left
@@ -399,7 +431,8 @@ void Controller::drawLCD(const uint32_t now) {
   M5.Lcd.setTextColor(WHITE, BLACK);
   M5.Lcd.printf(" %.2f ", 1 / 1000.0 * now);
 
-  for (int i = 0; i < NUM_DRIVES; i++) {
+  for (int i = 0; i < MAX_DRIVES; i++) {
+    if (!drives_[i]) break;
     if (!drives_[i]->getLastFaults()) continue;
     M5.Lcd.setTextColor(RED, BLACK);
     M5.Lcd.printf("[o%d:e%x]", i, drives_[i]->getLastFaults());
