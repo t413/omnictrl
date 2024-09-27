@@ -29,10 +29,11 @@ void CanEsp32Twai::setup(uint8_t rx, uint8_t tx, Stream* debug) {
     }
 }
 
-void CanEsp32Twai::send(uint32_t id, uint8_t* data, uint8_t len, bool ss) {
+void CanEsp32Twai::send(uint32_t id, uint8_t* data, uint8_t len, bool ss, bool rtr) {
     twai_message_t message = {0};
     message.extd = 1; //enable extended frame format
     message.ss = ss; //enable single shot transmission
+    message.rtr = rtr; //enable remote transmission request
     message.identifier = id;
     message.data_length_code = len;
     memcpy(message.data, data, len);
