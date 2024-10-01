@@ -7,6 +7,7 @@ public:
     virtual uint8_t getID() const = 0;
     virtual String getName() const = 0;
     virtual void requestStatus() = 0;
+    virtual void requestVBus() = 0;
     virtual void setModePosition() = 0;
     virtual void setModeSpeed() = 0;
     virtual void setModeCurrent() = 0;
