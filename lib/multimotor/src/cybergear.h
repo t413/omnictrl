@@ -23,6 +23,7 @@ public:
     uint8_t getID() const override { return id_; }
     virtual String getName() const;
     void requestStatus() override;
+    void requestVBus() override;
     virtual void setModePosition() { setMode(CyberGearMode::Position); }
     virtual void setModeSpeed() { setMode(CyberGearMode::Speed); }
     virtual void setModeCurrent() { setMode(CyberGearMode::Current); }

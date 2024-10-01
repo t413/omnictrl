@@ -5,10 +5,13 @@
 #include <AlfredoCRSF.h>
 #include <MadgwickAHRS.h>
 #include <motordrive.h>
+#include <vector>
 
 namespace lgfx { inline namespace v1 { class LGFX_Device; } }
 constexpr uint8_t MAX_DRIVES = 8;
 struct CanMessage;
+class DynamicsDriver;
+
 
 class Controller {
   MotorDrive* drives_[MAX_DRIVES] = {nullptr};
@@ -17,15 +20,11 @@ class Controller {
   int8_t lastState_ = -1;
   bool lastLinkUp_ = false;
   Madgwick imuFilt_;
+  float imuRot_[3][3] = {0};
   float gyroZ = 0;
-  PIDCtrl yawCtrl_ = PIDCtrl(0.28, 0.08, 0.0, 10);
-  PIDCtrl balanceCtrl_ = PIDCtrl(17.0, 0.50, 0.06, 30);
-  PIDCtrl balanceSpeedCtrl_ = PIDCtrl(12.6, 4.0, 0.0, 18);
-  float filteredFwdSpeed_ = 0.0;
-  float filteredFwdSpeedAlpha_ = 0.04;
-  float maxSpeed_ = 0.0;
-  bool yawCtrlEnabled_ = false;
-  bool isBalancing_ = false;
+  static constexpr uint8_t DD_MAX = 3;
+  std::vector<DynamicsDriver*> drivers_;
+  DynamicsDriver* activeDriver_ = nullptr;
   bool redrawLCD_ = false;
   lgfx::v1::LGFX_Device* lcd_ = nullptr;
 
@@ -42,6 +41,11 @@ public:
   void loop();
 
   uint8_t getValidDriveCount(uint32_t validTime = 500) const;
+  MotorDrive** getDrives() { return drives_; }
+  MotorDrive* getDrive(uint8_t id) const;
+  AlfredoCRSF& getLink() { return crsf_; }
+  const float** getRot() { return imuRot_; }
+  bool canPrint() const;
   MotorDrive* add(MotorDrive* drive);
 
   void handleCAN(const CanMessage& msg, uint32_t now);

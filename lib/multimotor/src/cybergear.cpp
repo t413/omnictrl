@@ -15,10 +15,18 @@ enum Cmds {
     CmdGetStatus             = 0x15,
 };
 
-enum Addresses {
-    AddrRunMode = 0x7005,
-    AddrSpeedSetpoint = 0x700A,
-    AddrPosSetpoint   = 0x7016,
+enum class Addr {
+    RunMode = 0x7005,
+    SpeedSetpoint = 0x700A,
+    PosSetpoint   = 0x7016,
+    VBusMv        = 0x3007,
+};
+
+union Payload {
+    uint8_t  bytes[8] = {0};
+    uint16_t words[4];
+    uint32_t dwords[2];
+    float    floats[2];
 };
 
 CyberGearDriver::CyberGearDriver(uint8_t id, CanInterface* can) : id_(id), can_(can) { }
@@ -46,8 +54,16 @@ void CyberGearDriver::requestStatus() {
     if (can_) can_->send(mkID(CmdGetStatus, 0, 0, id_), data, 8);
 }
 
+void CyberGearDriver::requestVBus() {
+    Payload p;
+    //perhaps send CmdRequest with middle canID bytes as 0x30 0x07?
+    //needs testing with the 'scope view' feature of the windows app
+    p.words[0] = (uint16_t) Addr::VBusMv;
+    if (can_) can_->send(mkID(CmdRamRead, 0, 0, id_), p.bytes, 8, true, true); //ss, rtr
+}
+
 void CyberGearDriver::setMode(CyberGearMode mode) {
-    uint8_t data[8] = { AddrRunMode & 0x00FF, AddrRunMode >> 8, 0x00, 0x00, (uint8_t) mode, 0x00, 0x00, 0x00};
+    uint8_t data[8] = { Addr::RunMode & 0x00FF, Addr::RunMode >> 8, 0x00, 0x00, (uint8_t) mode, 0x00, 0x00, 0x00};
     if (can_) can_->send(mkID(CmdRamWrite, 0, 0, id_), data, 8);
 }
 
@@ -57,13 +73,13 @@ void CyberGearDriver::enable(bool enable) {
 }
 
 void CyberGearDriver::setPos(float pos) {
-    uint8_t data[8] = { AddrPosSetpoint & 0x00FF, AddrPosSetpoint >> 8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    uint8_t data[8] = { Addr::PosSetpoint & 0x00FF, Addr::PosSetpoint >> 8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     memcpy(&data[4], &pos, 4);
     if (can_) can_->send(mkID(CmdRamWrite, 0, 0, id_), data, 8);
 }
 
 void CyberGearDriver::setSpeed(float speed) {
-    uint8_t data[8] = { AddrSpeedSetpoint & 0x00FF, AddrSpeedSetpoint >> 8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    uint8_t data[8] = { Addr::SpeedSetpoint & 0x00FF, Addr::SpeedSetpoint >> 8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     memcpy(&data[4], &speed, 4);
     if (can_) can_->send(mkID(CmdRamWrite, 0, 0, id_), data, 8);
 }

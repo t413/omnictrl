@@ -1,5 +1,6 @@
 #include "controller.h"
 #include "utils.h"
+#include "drivers/tri-omni.h"
 #include <Arduino.h>
 #include <cybergear.h>
 #include <odrive.h>
@@ -7,6 +8,8 @@
 #ifdef IS_M5
 #include <M5Unified.h>
 #endif
+// #include <esp_now.h>
+// #include <WiFi.h>
 
 #if defined(ARDUINO_M5Stack_ATOMS3)
 #define PIN_CRSF_RX 5
@@ -22,7 +25,6 @@
 #error "unknown board"
 #endif
 
-#define MAX_TILT 20.0
 constexpr uint8_t CYBERGEAR_START_ADDR = 0x7D;
 
 bool canPrint() {
@@ -51,14 +53,12 @@ Controller::Controller(String version) :
 
 static Controller* controller_ = nullptr;
 
+bool Controller::canPrint() const { return ::canPrint(); }
+
 void Controller::setup() {
   controller_ = this;
-#ifdef CONFIG_IDF_TARGET_ESP32
   Serial.begin(115200);
-#endif
-
-    Serial.begin(115200);
-    Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
+  Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
   if (canPrint()) { //only use the virtual serial port if it's available
     Serial.println("Controller setup");
     Serial.flush();
@@ -105,6 +105,13 @@ uint8_t Controller::getValidDriveCount(uint32_t validTime) const {
   return validCount;
 }
 
+MotorDrive* Controller::getDrive(uint8_t id) const {
+  for (int i = 0; i < MAX_DRIVES; i++)
+    if (drives_[i] && drives_[i]->getID() == id)
+      return drives_[i];
+  return nullptr;
+}
+
 MotorDrive* Controller::add(MotorDrive* drive) {
   for (int i = 0; i < MAX_DRIVES; i++)
     if (!drives_[i])
@@ -115,6 +122,7 @@ MotorDrive* Controller::add(MotorDrive* drive) {
 uint32_t lastDraw = 0;
 uint32_t lastDrive = 1000;
 uint32_t lastPollStats = 0;
+uint32_t lastPollVbus = 33;
 uint32_t lastTxStats = 0;
 uint32_t lastClear = 0;
 
@@ -128,7 +136,7 @@ void Controller::loop() {
         drives_[i]->requestStatus();
         validCount++;
       }
-    if (validCount < 3) {
+    if (!activeDriver_) {
       if (canPrint())
         Serial.printf("only %d drives! trying to query.\n", validCount);
       CyberGearDriver requester(CYBERGEAR_START_ADDR + validCount, &twaiInterface_);
@@ -138,6 +146,17 @@ void Controller::loop() {
   }
 
 #if 0
+  if ((now - lastPollVbus) > 666) {
+    if (canPrint())
+      Serial.printf("requesting vbus\n");
+    // drives_[0].driver_.request_vbus();
+    // for (int i = 0; i < NUM_DRIVES; i++) {
+      // drives_[i]->driver_.request_vbus();
+      // drives_[i]->driver_.request_can_float_package(drives_[i]->id_, ADDR_APP_VERS);
+    // }
+    lastPollVbus = now;
+  }
+
   if (((now - lastTxStats) > 100) && crsf_.isLinkUp()) {
     crsf_sensor_battery_t crsfBatt = {
       .voltage = htobe16((uint16_t)(lastBusStatus_.Bus_Voltage * 10.0)),
@@ -169,19 +188,8 @@ void Controller::loop() {
   if ((now - lastDrive) > 20) {
     updateIMU();
 
-    float q[4] = {0};
-    imuFilt_.getQuaternion(q);
-
-    float R[3][3] = {0};
-    R[0][0] = 1 - 2 * (q[2] * q[2] + q[3] * q[3]);
-    R[0][1] = 2 * (q[1] * q[2] - q[0] * q[3]);
-    R[0][2] = 2 * (q[1] * q[3] + q[0] * q[2]);
-    R[1][0] = 2 * (q[1] * q[2] + q[0] * q[3]);
-    R[1][1] = 1 - 2 * (q[1] * q[1] + q[3] * q[3]);
-    R[1][2] = 2 * (q[2] * q[3] - q[0] * q[1]);
-    R[2][0] = 2 * (q[1] * q[3] - q[0] * q[2]);
-    R[2][1] = 2 * (q[2] * q[3] + q[0] * q[1]);
-    R[2][2] = 1 - 2 * (q[1] * q[1] + q[2] * q[2]);
+    if (activeDriver_)
+      activeDriver_->loop();
 
     float pitchFwd = (atan2(-R[2][0], R[2][2]) + PI / 2) * 180.0 / PI;
 
@@ -331,6 +339,18 @@ bool Controller::updateIMU() {
   auto data = M5.Imu.getImuData(); //no mag data it seems, sadly
   imuFilt_.updateIMU<0,'D'>(-data.gyro.y, -data.gyro.x, -data.gyro.z, data.accel.y, data.accel.x, data.accel.z); //acc x/y are swapped
 #endif
+  float q[4] = {0};
+  imuFilt_.getQuaternion(q);
+  auto& R = imuRot_;
+  R[0][0] = 1 - 2 * (q[2] * q[2] + q[3] * q[3]);
+  R[0][1] = 2 * (q[1] * q[2] - q[0] * q[3]);
+  R[0][2] = 2 * (q[1] * q[3] + q[0] * q[2]);
+  R[1][0] = 2 * (q[1] * q[2] + q[0] * q[3]);
+  R[1][1] = 1 - 2 * (q[1] * q[1] + q[3] * q[3]);
+  R[1][2] = 2 * (q[2] * q[3] - q[0] * q[1]);
+  R[2][0] = 2 * (q[1] * q[3] - q[0] * q[2]);
+  R[2][1] = 2 * (q[2] * q[3] + q[0] * q[1]);
+  R[2][2] = 1 - 2 * (q[1] * q[1] + q[2] * q[2]);
   return true;
 }
 
