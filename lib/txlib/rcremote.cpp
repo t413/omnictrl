@@ -102,6 +102,19 @@ void RCRemote::setArmState(bool arm) {
   }
 }
 
+float deadband(float v, float db = 0.05) {
+  //return 0 if v is within deadband
+  //re-scale to have smooth transition to 0
+  if (db == 0) return v;
+  else if (v >  db) return (v - db);
+  else if (v < -db) return (v + db);
+  return 0;
+}
+
+float expo(float v, float e) {
+  return copysign(pow(abs(v), e), v);
+}
+
 void RCRemote::loop() {
   uint32_t now = millis();
 
@@ -120,28 +133,37 @@ void RCRemote::loop() {
   }
   #endif
 
-  if ((now - lastPoll_) > ((armed_ || !powerSaveMode_)? 50 : 200)) {
+  if ((now - lastPoll_) > ((armed_ || !powerSaveMode_)? 25 : 200)) {
     updateIMU();
 
-    uint16_t x, y;
+    uint16_t x = 30300, y = 32600;
     joy_.get_joy_adc_16bits_value_xy(&x, &y);
     bool btn = !joy_.get_button_value();
     if (btn != lastBtn_ && btn) {
       setArmState(!armed_);
     }
     lastBtn_ = btn;
-    lastMotion_.state = armed_? 1 : 0;
-    lastMotion_.yaw   =  (x - 30300) / 65500.0 * 2;
-    lastMotion_.fwd   = -(y - 32600) / 65500.0 * 2;
-    lastMotion_.pitch = pitchRollOutEn_? imuFilt_.getPitchDegree() / 2.0 : 0;
-    lastMotion_.roll  = pitchRollOutEn_? imuFilt_.getRollDegree()  / 2.0 : 0;
-    lastMotion_.timestamp = now;
-    // TODO deadband, expo.
-
-    uint8_t data[1 + sizeof(MotionControl)] = {0};
-    data[0] = (uint8_t) Cmds::MotionControl;
-    memcpy(data + 1, &lastMotion_, sizeof(MotionControl));
-    auto result = esp_now_send(broadcastAddress, data, sizeof(data));
+    MotionControl mc;
+    mc.state = armed_? 1 : 0;
+    float deadband_ = 0.05;
+    float expo_ = 1.5;
+    mc.yaw   = expo(deadband( (x - 30300) / 65500.0 * 2, deadband_), expo_);
+    mc.fwd   = expo(deadband(-(y - 32600) / 65500.0 * 2, deadband_), expo_);
+    mc.pitch = pitchRollOutEn_? expo(deadband(imuFilt_.getPitchDegree() / 2.0, 1.0), expo_) : 0;
+    mc.roll  = pitchRollOutEn_? expo(deadband(imuFilt_.getRollDegree()  / 2.0, 1.0), expo_) : 0;
+    mc.fwd  += -constrain(mc.pitch / 20.0, -1.0, 1.0);
+    mc.timestamp = now;
+    //check for major discontinuity
+    if (abs(mc.yaw - lastMotion_.yaw) > 1.0 || abs(mc.fwd - lastMotion_.fwd) > 1.0) {
+      Serial.printf("Discontinuity: [%d,%d]\n", x, y);
+    } else {
+      //send it
+      uint8_t data[1 + sizeof(MotionControl)] = {0};
+      data[0] = (uint8_t) Cmds::MotionControl;
+      memcpy(data + 1, &mc, sizeof(MotionControl));
+      auto result = esp_now_send(broadcastAddress, data, sizeof(data));
+    }
+    lastMotion_ = mc;
 
     if (canPrint()) {
       Serial.printf("xy: [%d,%d] -> f,y,p,r: [%.2f,%.2f,\t%.2f,%.2f] -> %s\n",
