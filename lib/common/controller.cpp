@@ -215,8 +215,11 @@ void Controller::loop() {
     float fwd = 0, side = 0, yaw = 0, thr = 0;
     bool arm = lastState_;
     // --- CRSF Rx --- //
-    if (crsf_.isLinkUp()) {
-      arm = crsf_.getChannel(5) > 1500;
+
+    bool csrfArm = crsf_.isLinkUp()? crsf_.getChannel(5) > 1500 : false;
+    bool motionArm = lastMotionCmd_.state > 0;
+    if (crsf_.isLinkUp() && csrfArm) {
+      arm = csrfArm;
       yawCtrlEnabled_ = crsf_.getChannel(6) > 1400 && crsf_.getChannel(6) < 1600;
       bool balanceModeEnabled_ = crsf_.getChannel(6) > 1600;
       bool enableAdjustment = (yawCtrlEnabled_ || balanceModeEnabled_) && (crsf_.getChannel(8) > 1500);
@@ -234,8 +237,8 @@ void Controller::loop() {
       }
 
     // --- ESP-NOW Tx / Rx --- //
-    } else if (lastMotionCmd_.timestamp > (now - 300)) {
-      arm = lastMotionCmd_.state > 0;
+    } else if (lastMotionCmd_.timestamp > (now - 300) && motionArm) {
+      arm = motionArm;
       maxSpeed_ = 18;
       fwd = mapfloat(lastMotionCmd_.fwd, -1, 1, -maxSpeed_, maxSpeed_);
       yaw = mapfloat(lastMotionCmd_.yaw, -1, 1, -maxSpeed_, maxSpeed_);
@@ -243,8 +246,10 @@ void Controller::loop() {
       side = constrain(side, -maxSpeed_, maxSpeed_);
       isBalancing_ = isUpOnEnd;
     } else { // no control input
+      arm = false;
       yawCtrlEnabled_ = false;
       isBalancing_ = false;
+      lastMotionCmd_ = MotionControl();
     }
 
     //main control loop
