@@ -206,46 +206,48 @@ void RCRemote::drawLCD(const uint32_t now) {
   }
 
   //draw 2px line down left, right, and bottom of screen
-  lcd_->fillRect(0, 0, 2, lcd_->height(), bgRainbow); //vertical left
-  lcd_->fillRect(lcd_->width() - 2, 0, 2, lcd_->height(), bgRainbow); //vertical right
-  lcd_->fillRect(0, lcd_->height() - 2, lcd_->width(), 2, bgRainbow); //horizontal bottom
+  uint16_t borderW = 2;
+  lcd_->fillRect(0, 0, borderW, lcd_->height(), bgRainbow); //vertical left
+  lcd_->fillRect(lcd_->width() - borderW, 0, borderW, lcd_->height(), bgRainbow); //vertical right
+  lcd_->fillRect(0, lcd_->height() - borderW, lcd_->width(), borderW, bgRainbow); //horizontal bottom
 
   //show title
-  lcd_->setCursor(2, 0);
+  lcd_->setCursor(borderW, 0);
   lcd_->setTextColor(fg, bgRainbow);
   lcd_->setFont(&FreeSansBold18pt7b);
-  drawCentered(title.c_str(), lcd_, bgRainbow);
-  lcd_->setCursor(2, lcd_->getCursorY()); //indent-in 2px
+  drawCentered(title.c_str(), lcd_, bgRainbow, borderW);
+  lcd_->setCursor(borderW, lcd_->getCursorY()); //indent-in 2px
 
   if (redrawLCD_ || (now - lastClear_) > 5000) {
     auto x = lcd_->getCursorX(), y = lcd_->getCursorY();
-    lcd_->fillRect(x, y, lcd_->width() - x - 2, lcd_->height() - y - 2, pageBG);
+    lcd_->fillRect(x, y, lcd_->width() - x - borderW, lcd_->height() - y - borderW, pageBG);
     lastClear_ = now;
     redrawLCD_ = false;
   }
 
   //draw lastMotion_
-  lcd_->setTextColor(fg, bgRainbow);
+  lcd_->setTextColor(bgRainbow, pageBG);
   lcd_->setFont(&FreeMono12pt7b);
-  drawCentered(("f" + String(lastMotion_.fwd)).c_str(), lcd_, bgRainbow);
-  drawCentered(("y" + String(lastMotion_.yaw)).c_str(), lcd_, bgRainbow);
-  drawCentered(("p" + String(lastMotion_.pitch)).c_str(), lcd_, bgRainbow);
-  drawCentered(("r" + String(lastMotion_.roll)).c_str(), lcd_, bgRainbow);
+  drawCentered(("f" + String(lastMotion_.fwd  )).c_str(), lcd_, pageBG, borderW);
+  drawCentered(("y" + String(lastMotion_.yaw  )).c_str(), lcd_, pageBG, borderW);
+  drawCentered(("p" + String(lastMotion_.pitch)).c_str(), lcd_, pageBG, borderW);
+  drawCentered(("r" + String(lastMotion_.roll )).c_str(), lcd_, pageBG, borderW);
 
   //bottom aligned
   M5.Lcd.setFont(&Font0);
-  M5.Lcd.setCursor(2, M5.Lcd.height() - 9);
+  M5.Lcd.setCursor(borderW, M5.Lcd.height() - borderW - M5.Lcd.fontHeight());
+  auto bttmY = M5.Lcd.getCursorY();
   M5.Lcd.setTextColor(WHITE, BLACK);
-  M5.Lcd.printf("%.20s", version_.c_str());
+  drawCentered(version_.c_str(), lcd_, pageBG, borderW);
 
   // if this has a battery, show that next up from the bottom
   auto power = M5.Power.getType();
   if (power != M5.Power.pmic_unknown) {
-    lcd_->setTextColor(WHITE, BLACK);
+    lcd_->setTextColor(WHITE, pageBG);
     lcd_->setFont(&FreeMono12pt7b);
-    lcd_->setCursor(2, lcd_->getCursorY() - lcd_->fontHeight() - 2);
+    lcd_->setCursor(borderW, bttmY - lcd_->fontHeight());
     String pwr = String(M5.Power.getBatteryVoltage() / 1000.0) + "V";
-    drawCentered(pwr.c_str(), lcd_, BLACK);
+    drawCentered(pwr.c_str(), lcd_, pageBG, borderW);
   }
 
   M5.Lcd.endWrite();

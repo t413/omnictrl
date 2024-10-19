@@ -472,7 +472,7 @@ void Controller::drawLCD(const uint32_t now) {
   M5.Lcd.endWrite();
 }
 
-void drawCentered(const char* text, lgfx::v1::LGFX_Device* lcd, uint16_t bg) {
+void drawCentered(const char* text, lgfx::v1::LGFX_Device* lcd, uint16_t bg, uint16_t lr_padding) {
   if (!lcd) return;
   auto titlewidth = lcd->textWidth(text);
   auto titleheight = lcd->fontHeight();
@@ -482,9 +482,9 @@ void drawCentered(const char* text, lgfx::v1::LGFX_Device* lcd, uint16_t bg) {
     titlewidth = lcd->textWidth(text);
   }
   lcd->setCursor((lcd->width() - titlewidth) / 2, starty); //center title
-  lcd->fillRect(0, starty, lcd->getCursorX(), lcd->fontHeight(), bg);
+  lcd->fillRect(lr_padding, starty, lcd->getCursorX(), lcd->fontHeight(), bg);
   lcd->print(text);
-  lcd->fillRect(lcd->getCursorX(), starty, lcd->width() - lcd->getCursorX(), lcd->fontHeight(), bg);
+  lcd->fillRect(lcd->getCursorX(), starty, lcd->width() - lcd->getCursorX() - lr_padding, lcd->fontHeight(), bg);
   lcd->println();
 }
 

@@ -39,4 +39,4 @@ public:
   const String version_;
 };
 
-void drawCentered(const char* text, lgfx::v1::LGFX_Device*, uint16_t bg);
+void drawCentered(const char* text, lgfx::v1::LGFX_Device*, uint16_t bg, uint16_t lr_padding = 2);
