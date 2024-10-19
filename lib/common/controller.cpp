@@ -215,7 +215,7 @@ void Controller::loop() {
 
       float vels[NUM_DRIVES] = {0};
       yawCtrl_.limit = maxSpeed_; //TODO filter this
-      float y = yawCtrlEnabled_? yawCtrl_.update((-yaw * 100) - gyroZ) : -yaw; //convert yaw to angular rate
+      float y = yawCtrlEnabled_? yawCtrl_.update(now, (-yaw * 100) - gyroZ) : -yaw; //convert yaw to angular rate
 
 #if NUM_DRIVES == 3
       #define BACK 0
@@ -224,8 +224,8 @@ void Controller::loop() {
       if (isBalancing_) {
         //balance mode
         float pitch = pitchFwd;
-        float pitchGoal = balanceSpeedCtrl_.update(filteredFwdSpeed_ - fwd);
-        float pctrl = balanceCtrl_.update(pitchGoal - pitch); //goal is pitch at 0
+        float pitchGoal = balanceSpeedCtrl_.update(now, filteredFwdSpeed_ - fwd, balanceCtrl_.getPrevOut() - fwd);
+        float pctrl = balanceCtrl_.update(now, pitchGoal - pitch); //goal is pitch at 0
         filteredFwdSpeed_ = filteredFwdSpeed_ * (1 - filteredFwdSpeedAlpha_) + pctrl * filteredFwdSpeedAlpha_;
         if (canPrint()) {
           Serial.printf("(speed %06.2f, fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> pctrl %06.2f\n",
@@ -233,8 +233,12 @@ void Controller::loop() {
         }
         // if (endIdx == 0) { //fwd balancing
         fwd = pctrl;
+        y += -side; //roll also controlls yaw when balancing
         side = 0; //disable side
-      } else balanceSpeedCtrl_.reset();
+      } else {
+        balanceSpeedCtrl_.reset();
+        balanceCtrl_.reset();
+      }
       // yaw, fwd, side
       vels[BACK] = y  +   0   + side;
       vels[LEFT] = y  - fwd   - side * 1.33/2;

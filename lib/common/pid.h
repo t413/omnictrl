@@ -1,11 +1,13 @@
 #pragma once
 
+constexpr float NOT_SET = -123456.0;
+
 class PIDCtrl {
 public:
     PIDCtrl(float P, float I, float D, float limit);
     ~PIDCtrl() = default;
 
-    float update(float error);
+    float update(unsigned long now, float error, float integralError = NOT_SET);
     void reset();
     float getPrevOut() const { return prevOut; }
 

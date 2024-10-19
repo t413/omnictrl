@@ -30,9 +30,15 @@ class Controller {
   bool redrawLCD_ = false;
   lgfx::v1::LGFX_Device* lcd_ = nullptr;
 
-  static const uint8_t NUM_ADJUSTABLES = 4;
-  float* adjustables_[NUM_ADJUSTABLES] = { &filteredFwdSpeedAlpha_, &balanceSpeedCtrl_.P, &balanceSpeedCtrl_.I, &balanceSpeedCtrl_.D};
-  String adjNames_[NUM_ADJUSTABLES] = { "a", "bP", "bI", "bD" };
+  static const uint8_t NUM_ADJUSTABLES = 9;
+  float* adjustables_[NUM_ADJUSTABLES] = {
+      &balanceCtrl_.P, &balanceCtrl_.I, &balanceCtrl_.D, &balanceCtrl_.limit,
+      &filteredFwdSpeedAlpha_, &balanceSpeedCtrl_.P, &balanceSpeedCtrl_.I, &balanceSpeedCtrl_.D, &balanceSpeedCtrl_.limit,
+  };
+  String adjNames_[NUM_ADJUSTABLES] = {
+      "balP", "balI", "balD", "balL",
+      "spdFilt", "spdP", "spdI", "spdD", "spdL"
+  };
   uint8_t selectedTune_ = NUM_ADJUSTABLES; //none selected
 
 public:
