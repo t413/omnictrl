@@ -23,6 +23,7 @@ class RCRemote {
   uint32_t lastDraw_ = 0;
   uint32_t lastClear_ = 0;
   MotionControl lastMotion_;
+  bool lastSentFail_ = false;
 
 public:
   RCRemote(String version);
@@ -31,6 +32,7 @@ public:
   void setup();
   void loop();
 
+  void setArmState(bool arm);
   void handleRxPacket(const uint8_t* buf, uint8_t len);
   void drawLCD(const uint32_t);
   bool updateIMU();

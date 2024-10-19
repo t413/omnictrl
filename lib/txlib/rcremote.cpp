@@ -23,10 +23,7 @@ RCRemote::RCRemote(String version) :
   version_(version) {
 }
 
-static RCRemote* remote_ = nullptr;
-
 void RCRemote::setup() {
-  remote_ = this;
 #ifdef CONFIG_IDF_TARGET_ESP32
   Serial.begin(115200);
 #endif
@@ -47,13 +44,12 @@ void RCRemote::setup() {
   auto res = esp_now_init();
   if (res != ESP_OK && canPrint())
     Serial.printf("ESP-NOW init failed: %d\n", res);
+  static auto remote_ = this;
   esp_now_register_recv_cb([](const uint8_t *mac, const uint8_t *data, int len) {
-    if (remote_)
-      remote_->handleRxPacket(data, len);
+    remote_->handleRxPacket(data, len);
   });
   esp_now_register_send_cb([](const uint8_t *mac, esp_now_send_status_t status) {
-    if (status == ESP_NOW_SEND_FAIL && canPrint())
-      Serial.printf("send fail: %d\n", status);
+    remote_->lastSentFail_ = (status == ESP_NOW_SEND_FAIL);
   });
   // Register peer
   memcpy(peerInfo_.peer_addr, broadcastAddress, 6);
@@ -82,6 +78,7 @@ void RCRemote::setup() {
     Serial.println("finished setup");
 
   delay(100);
+  Serial.printf("Ready. Version %s\n", version_.c_str());
 }
 
 
@@ -95,6 +92,15 @@ void RCRemote::handleRxPacket(const uint8_t* buf, uint8_t len) {
   auto cmd = len >= 1? (Cmds) buf[0] : Cmds::None;
 }
 
+void RCRemote::setArmState(bool arm) {
+  if (powerSaveMode_)
+    return;
+  if (armed_) { //disarming
+    armed_ = false; //always just disarm
+  } else if (!armed_ && !lastSentFail_) { //arming check
+    armed_ = true;
+  }
+}
 
 void RCRemote::loop() {
   uint32_t now = millis();
@@ -103,9 +109,7 @@ void RCRemote::loop() {
   M5.update(); //updates buttons, etc
   if (M5.BtnA.wasPressed()) {
     lastWasMoved_ = now;
-    if (!powerSaveMode_) {
-      armed_ = !armed_;
-    }
+    setArmState(!armed_);
     redrawLCD_ = true;
   }
   if (M5.BtnB.wasPressed()) {
@@ -123,7 +127,7 @@ void RCRemote::loop() {
     joy_.get_joy_adc_16bits_value_xy(&x, &y);
     bool btn = !joy_.get_button_value();
     if (btn != lastBtn_ && btn) {
-      armed_ = !armed_;
+      setArmState(!armed_);
     }
     lastBtn_ = btn;
     lastMotion_.state = armed_? 1 : 0;
@@ -140,8 +144,10 @@ void RCRemote::loop() {
     auto result = esp_now_send(broadcastAddress, data, sizeof(data));
 
     if (canPrint()) {
-      Serial.printf("xy: [%d,%d] -> f,y,p,r: [%.2f,%.2f,\t%.2f,%.2f]\n",
-        x, y, lastMotion_.fwd, lastMotion_.yaw, lastMotion_.pitch, lastMotion_.roll);
+      Serial.printf("xy: [%d,%d] -> f,y,p,r: [%.2f,%.2f,\t%.2f,%.2f] -> %s\n",
+        x, y, lastMotion_.fwd, lastMotion_.yaw, lastMotion_.pitch, lastMotion_.roll,
+        lastSentFail_? "fail" : "ok"
+      );
     }
 
     //show red when armed, dark purple when not
@@ -162,7 +168,7 @@ void RCRemote::loop() {
       //turn of LCD
       powerSaveMode_ = true;
       M5.Lcd.setBrightness(0);
-    } else if (!armed_ && powerSaveMode_ && sinceMoved > 2 * 60 * 1000) { //2 minutes
+    } else if (!armed_ && powerSaveMode_ && (sinceMoved > 2 * 60 * 1000) && lastSentFail_) { //2 minutes
       M5.Power.powerOff();
     } else {
       drawLCD(now);
@@ -193,6 +199,11 @@ void RCRemote::drawLCD(const uint32_t now) {
   auto pageBG = BLACK;
 
   String title = armed_? "GO" : "--";
+  if (lastSentFail_) {
+    title = "no link";
+    fg = RED;
+    bgRainbow = SUPERDARKRED;
+  }
 
   //draw 2px line down left, right, and bottom of screen
   lcd_->fillRect(0, 0, 2, lcd_->height(), bgRainbow); //vertical left
@@ -225,7 +236,7 @@ void RCRemote::drawLCD(const uint32_t now) {
   M5.Lcd.setFont(&Font0);
   M5.Lcd.setCursor(2, M5.Lcd.height() - 9);
   M5.Lcd.setTextColor(WHITE, BLACK);
-  M5.Lcd.printf(" %.2f ", 1 / 1000.0 * now);
+  M5.Lcd.printf("%.20s", version_.c_str());
 
   // if this has a battery, show that next up from the bottom
   auto power = M5.Power.getType();
