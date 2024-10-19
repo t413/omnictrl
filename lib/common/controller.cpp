@@ -29,6 +29,7 @@ const uint8_t DRIVE_IDS[NUM_DRIVES] = {0};
 #endif
 
 #define MAX_TILT 20.0
+constexpr uint32_t IMU_UPDATE_PERIOD = 20; //ms
 
 bool canPrint() {
   #if ARDUINO_USB_CDC_ON_BOOT
@@ -50,6 +51,7 @@ Controller::~Controller() { }
 
 Controller::Controller(String version) :
         version_(version) {
+  imuFilt_ .setFrequency(1000 / IMU_UPDATE_PERIOD); //50Hz, 20ms
 }
 
 static Controller* controller_ = nullptr;
@@ -190,7 +192,7 @@ void Controller::loop() {
   #endif
   float* tunable = selectedTune_ < NUM_ADJUSTABLES? adjustables_[selectedTune_] : NULL;
 
-  if ((now - lastDrive) > 20) {
+  if ((now - lastDrive) > IMU_UPDATE_PERIOD) {
     updateIMU();
 
     float q[4] = {0};
