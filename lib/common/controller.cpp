@@ -6,8 +6,14 @@
 #ifdef IS_M5
 #include <M5Unified.h>
 #endif
+#include <esp_now.h>
+#include <WiFi.h>
 
+#if NUM_DRIVES == 3
 const uint8_t DRIVE_IDS[NUM_DRIVES] = {0x7D, 0x7E, 0x7F};
+#else
+const uint8_t DRIVE_IDS[NUM_DRIVES] = {0};
+#endif
 #if defined(ARDUINO_M5Stack_ATOMS3)
 #define PIN_CRSF_RX 5
 #define PIN_CRSF_TX 6
@@ -79,6 +85,15 @@ void Controller::setup() {
   if (canPrint())
     Serial.printf("finished CAN setup\n");
 
+  WiFi.mode(WIFI_STA);
+  auto res = esp_now_init();
+  if (res != ESP_OK && canPrint())
+    Serial.printf("ESP-NOW init failed: %d\n", res);
+  esp_now_register_recv_cb([](const uint8_t *mac, const uint8_t *data, int len) {
+    if (controller_)
+      controller_->handleRxPacket(data, len);
+  });
+
 #ifdef IS_M5
   M5.begin();
   //check if has lcd
@@ -100,6 +115,9 @@ void Controller::setup() {
   delay(100);
 }
 
+bool Controller::isLinkUp() const {
+  return crsf_.isLinkUp() || ((millis() - lastMotionCmd_.timestamp) < 300);
+}
 
 uint8_t Controller::getValidDriveCount() const {
   uint8_t validCount = 0;
@@ -108,6 +126,23 @@ uint8_t Controller::getValidDriveCount() const {
     if (hasRecent) validCount++;
   }
   return validCount;
+}
+
+void Controller::handleRxPacket(const uint8_t* buf, uint8_t len) {
+  if (canPrint()) {
+    Serial.printf("RX(%d): [", len);
+    for (int i = 0; i < len; i++)
+      Serial.printf("0x%02x, ", buf[i]);
+    Serial.println("]");
+  }
+  auto cmd = len >= 1? (Cmds) buf[0] : Cmds::None;
+  if (cmd == Cmds::MotionControl && len == (1 + sizeof(MotionControl))) {
+    auto mc = (const MotionControl*) (buf + 1);
+    if (canPrint())
+      Serial.printf("MC: a%d fwd %06.2f yaw %06.2f pitch %06.2f roll %06.2f\n", mc->state, mc->fwd, mc->yaw, mc->pitch, mc->roll);
+    lastMotionCmd_ = *mc;
+    lastMotionCmd_.timestamp = millis();
+  }
 }
 
 uint32_t lastDraw = 0;
@@ -123,8 +158,9 @@ void Controller::loop() {
     for (int i = 0; i < NUM_DRIVES; i++)
       drives_[i]->requestStatus();
     lastPollStats = now;
+    if (canPrint() && !isLinkUp())
+      Serial.println("MAC: " + WiFi.macAddress());
   }
-
 #if 0
   if (((now - lastTxStats) > 100) && crsf_.isLinkUp()) {
     crsf_sensor_battery_t crsfBatt = {
@@ -176,30 +212,45 @@ void Controller::loop() {
     bool isUpOnEnd = abs(pitchFwd) < (isBalancing_? MAX_TILT * 1.6 : MAX_TILT); //more tilt allowed when balancing
 
     //control inputs
-    yawCtrlEnabled_ = crsf_.getChannel(6) > 1400 && crsf_.getChannel(6) < 1600;
-    bool balanceModeEnabled_ = crsf_.getChannel(6) > 1600;
-    bool enableAdjustment = (yawCtrlEnabled_ || balanceModeEnabled_) && (crsf_.getChannel(8) > 1500);
-    maxSpeed_ = mapfloat(crsf_.getChannel(7), 1000, 2000, 6, 30); //aux 2: speed selection
-    isBalancing_ = (balanceModeEnabled_ && isUpOnEnd);
+    float fwd = 0, side = 0, yaw = 0, thr = 0;
+    bool arm = lastState_;
+    // --- CRSF Rx --- //
+    if (crsf_.isLinkUp()) {
+      arm = crsf_.getChannel(5) > 1500;
+      yawCtrlEnabled_ = crsf_.getChannel(6) > 1400 && crsf_.getChannel(6) < 1600;
+      bool balanceModeEnabled_ = crsf_.getChannel(6) > 1600;
+      bool enableAdjustment = (yawCtrlEnabled_ || balanceModeEnabled_) && (crsf_.getChannel(8) > 1500);
+      maxSpeed_ = mapfloat(crsf_.getChannel(7), 1000, 2000, 6, 30); //aux 2: speed selection
+      isBalancing_ = (balanceModeEnabled_ && isUpOnEnd);
 
-    float fwd = mapfloat(crsf_.getChannel(2), 1000, 2000, -maxSpeed_, maxSpeed_);
-    float side = mapfloat(crsf_.getChannel(1), 1000, 2000, -maxSpeed_, maxSpeed_);
-    float yaw = mapfloat(crsf_.getChannel(4), 1000, 2000, -maxSpeed_, maxSpeed_);
-    float thr = mapfloat(crsf_.getChannel(3), 1000, 2000, 0.0, 1.0);
+      fwd = mapfloat(crsf_.getChannel(2), 1000, 2000, -maxSpeed_, maxSpeed_);
+      side = mapfloat(crsf_.getChannel(1), 1000, 2000, -maxSpeed_, maxSpeed_);
+      yaw = mapfloat(crsf_.getChannel(4), 1000, 2000, -maxSpeed_, maxSpeed_);
+      thr = mapfloat(crsf_.getChannel(3), 1000, 2000, 0.0, 1.0);
 
-    if (enableAdjustment && tunable) {
-      // *tunable = thr / 10.0; //linear
-      //thr is 0-1, so we want to map it to 0.01-100
-      *tunable = pow(10, mapfloat(thr, 0, 1, -2, 2));
-      //allow 0 values
-      if (thr < 0.01) *tunable = 0;
+      if (enableAdjustment && tunable) {
+        *tunable = pow(10, mapfloat(thr, 0, 1, -2, 2));
+        if (thr < 0.01) *tunable = 0; //allow 0 values
+      }
+
+    // --- ESP-NOW Tx / Rx --- //
+    } else if (lastMotionCmd_.timestamp > (now - 300)) {
+      arm = lastMotionCmd_.state > 0;
+      maxSpeed_ = 18;
+      fwd = mapfloat(lastMotionCmd_.fwd, -1, 1, -maxSpeed_, maxSpeed_);
+      yaw = mapfloat(lastMotionCmd_.yaw, -1, 1, -maxSpeed_, maxSpeed_);
+      side = mapfloat(lastMotionCmd_.roll, -30, 30, -maxSpeed_, maxSpeed_); //this is in degrees tilt
+      side = constrain(side, -maxSpeed_, maxSpeed_);
+      isBalancing_ = isUpOnEnd;
+    } else { // no control input
+      yawCtrlEnabled_ = false;
+      isBalancing_ = false;
     }
 
     //main control loop
     if (getValidDriveCount()) { //at least one
 
       //arm/disarm
-      bool arm = crsf_.getChannel(5) > 1500;
       if (arm != lastState_) {
         if (canPrint())
           Serial.printf("SETTING STATE %s\n", arm? "ARM" : "DISARM");
@@ -255,7 +306,7 @@ void Controller::loop() {
       vels[FR_L] += y  +  fwd;
 
 #else
-#error "unsupported motor count, is: NUM_DRIVES"
+#warning "unsupported motor count, is: NUM_DRIVES"
 #endif
       //now output the drive commands
 
@@ -266,9 +317,9 @@ void Controller::loop() {
         }
       }
 
-      if (lastLinkUp_ != crsf_.isLinkUp())
+      if (lastLinkUp_ != isLinkUp())
         redrawLCD_ = true;
-      lastLinkUp_ = crsf_.isLinkUp();
+      lastLinkUp_ = isLinkUp();
     } // validCount
     lastDrive = now;
   }
@@ -301,7 +352,7 @@ bool Controller::updateIMU() {
   auto res = M5.Imu.isEnabled()? M5.Imu.update() : 0;
   if (!res) return false;
   auto data = M5.Imu.getImuData(); //no mag data it seems, sadly
-  imuFilt_.updateIMU<0,'D'>(-data.gyro.y, -data.gyro.x, -data.gyro.z, data.accel.y, data.accel.x, data.accel.z); //acc x/y are swapped
+  imuFilt_.updateIMU<0,'D'>(-data.gyro.y * gyroScale_, -data.gyro.x * gyroScale_, -data.gyro.z, data.accel.y, data.accel.x, data.accel.z); //acc x/y are swapped
 #endif
   return true;
 }
@@ -325,8 +376,8 @@ void Controller::drawLCD(const uint32_t now) {
   auto pageBG = BLACK;
   auto validCount = getValidDriveCount();
 
-  String title = (crsf_.isLinkUp()? "ready" : "NO LINK");
-  if (!crsf_.isLinkUp()) bgRainbow = RED;
+  String title = (isLinkUp()? "ready" : "NO LINK");
+  if (!isLinkUp()) bgRainbow = RED;
   if (isBalancing_) title = "balancing!";
   if (!validCount) {
     title = "no drives!";
@@ -396,6 +447,10 @@ void Controller::drawLCD(const uint32_t now) {
     M5.Lcd.setTextColor(fg, bgRainbow);
     M5.Lcd.printf(" %s", yawCtrlEnabled_? "[yaw]" : "[bal]");
   }
+
+  M5.Lcd.setFont(&FreeMono9pt7b);
+  M5.Lcd.setTextColor(WHITE, BLACK);
+  M5.Lcd.printf("p%0.1f", imuFilt_.getPitchDegree());
 
   //bottom aligned
   M5.Lcd.setFont(&Font0);
