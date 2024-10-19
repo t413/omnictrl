@@ -20,7 +20,7 @@ uint8_t broadcastAddress[] = {0xDC, 0x54, 0x75, 0xCB, 0xBA, 0xD0};
 RCRemote::~RCRemote() { }
 
 RCRemote::RCRemote(String version) :
-        version_(version) {
+  version_(version) {
 }
 
 static RCRemote* remote_ = nullptr;
@@ -52,8 +52,8 @@ void RCRemote::setup() {
       remote_->handleRxPacket(data, len);
   });
   esp_now_register_send_cb([](const uint8_t *mac, esp_now_send_status_t status) {
-    if (canPrint())
-      Serial.printf("send status: %d\n", status);
+    if (status == ESP_NOW_SEND_FAIL && canPrint())
+      Serial.printf("send fail: %d\n", status);
   });
   // Register peer
   memcpy(peerInfo_.peer_addr, broadcastAddress, 6);
@@ -102,14 +102,21 @@ void RCRemote::loop() {
   #ifdef IS_M5
   M5.update(); //updates buttons, etc
   if (M5.BtnA.wasPressed()) {
-    armed_ = !armed_;
+    lastWasMoved_ = now;
+    if (!powerSaveMode_) {
+      armed_ = !armed_;
+    }
     redrawLCD_ = true;
   }
   if (M5.BtnB.wasPressed()) {
+    lastWasMoved_ = now;
     pitchRollOutEn_ = !pitchRollOutEn_;
+    if (pitchRollOutEn_)
+      imuFilt_ = Madgwick(0.2, 50); //resets
   }
   #endif
-  if ((now - lastPoll_) > 50) {
+
+  if ((now - lastPoll_) > ((armed_ || !powerSaveMode_)? 50 : 200)) {
     updateIMU();
 
     uint16_t x, y;
@@ -122,8 +129,8 @@ void RCRemote::loop() {
     lastMotion_.state = armed_? 1 : 0;
     lastMotion_.yaw   =  (x - 30300) / 65500.0 * 2;
     lastMotion_.fwd   = -(y - 32600) / 65500.0 * 2;
-    lastMotion_.pitch = pitchRollOutEn_? imuFilt_.getPitchDegree() : 0;
-    lastMotion_.roll  = pitchRollOutEn_? imuFilt_.getRollDegree() : 0;
+    lastMotion_.pitch = pitchRollOutEn_? imuFilt_.getPitchDegree() / 2.0 : 0;
+    lastMotion_.roll  = pitchRollOutEn_? imuFilt_.getRollDegree()  / 2.0 : 0;
     lastMotion_.timestamp = now;
     // TODO deadband, expo.
 
@@ -132,16 +139,34 @@ void RCRemote::loop() {
     memcpy(data + 1, &lastMotion_, sizeof(MotionControl));
     auto result = esp_now_send(broadcastAddress, data, sizeof(data));
 
-    Serial.printf("x: %d, y: %d -> fwd: %.2f, yaw: %.2f btn: %d tx %d\n",
-      x, y, lastMotion_.fwd, lastMotion_.yaw, btn, result);
+    if (canPrint()) {
+      Serial.printf("xy: [%d,%d] -> f,y,p,r: [%.2f,%.2f,\t%.2f,%.2f]\n",
+        x, y, lastMotion_.fwd, lastMotion_.yaw, lastMotion_.pitch, lastMotion_.roll);
+    }
 
     //show red when armed, dark purple when not
     joy_.set_rgb_color(armed_? 0xFF0000 : 0x100010);
+    if (armed_ || abs(lastMotion_.fwd) > 0.1 || abs(lastMotion_.yaw) > 0.1)
+      lastWasMoved_ = now;
     lastPoll_ = now;
   }
 
+  uint32_t sinceMoved = now - lastWasMoved_;
   if ((now - lastDraw_) > 60 || redrawLCD_) {
-    drawLCD(now);
+    if (powerSaveMode_ && sinceMoved < 10000) {
+      powerSaveMode_ = false;
+      M5.Lcd.setBrightness(200); //turn on LCD
+
+    } else if (!powerSaveMode_ && !armed_ && sinceMoved > 10000) {
+      joy_.set_rgb_color(0xFFFF00); //yellow
+      //turn of LCD
+      powerSaveMode_ = true;
+      M5.Lcd.setBrightness(0);
+    } else if (!armed_ && powerSaveMode_ && sinceMoved > 2 * 60 * 1000) { //2 minutes
+      M5.Power.powerOff();
+    } else {
+      drawLCD(now);
+    }
     lastDraw_ = now;
   }
 
@@ -152,7 +177,7 @@ bool RCRemote::updateIMU() {
   auto res = M5.Imu.isEnabled()? M5.Imu.update() : 0;
   if (!res) return false;
   auto data = M5.Imu.getImuData(); //no mag data it seems, sadly
-  imuFilt_.updateIMU<0,'D'>(data.gyro.y * 2.0, data.gyro.x * 2.0, -data.gyro.z, -data.accel.y, -data.accel.x, data.accel.z); //acc x/y are swapped
+  imuFilt_.updateIMU<0,'D'>(data.gyro.y * 2.0, data.gyro.x * 2.0, -data.gyro.z / 2.0, -data.accel.y, -data.accel.x, data.accel.z); //acc x/y are swapped
 #endif
   return true;
 }

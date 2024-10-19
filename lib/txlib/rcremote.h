@@ -14,6 +14,8 @@ class RCRemote {
   Madgwick imuFilt_;
   lgfx::v1::LGFX_Device* lcd_ = nullptr;
   bool armed_ = false;
+  uint32_t lastWasMoved_ = 0;
+  bool powerSaveMode_ = false;
   bool lastBtn_ = false;
   bool pitchRollOutEn_ = false;
   bool redrawLCD_ = false;
