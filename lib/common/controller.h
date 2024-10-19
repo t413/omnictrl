@@ -54,7 +54,7 @@ public:
   void setup();
   void loop();
 
-  bool isLinkUp() const;
+  bool isLinkUp(uint32_t) const;
   uint8_t getValidDriveCount() const;
 
   void handleRxPacket(const uint8_t* buf, uint8_t len);

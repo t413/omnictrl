@@ -115,8 +115,8 @@ void Controller::setup() {
   delay(100);
 }
 
-bool Controller::isLinkUp() const {
-  return crsf_.isLinkUp() || ((millis() - lastMotionCmd_.timestamp) < 300);
+bool Controller::isLinkUp(uint32_t now) const {
+  return crsf_.isLinkUp() || ((now - lastMotionCmd_.timestamp) < 500);
 }
 
 uint8_t Controller::getValidDriveCount() const {
@@ -137,11 +137,11 @@ void Controller::handleRxPacket(const uint8_t* buf, uint8_t len) {
   }
   auto cmd = len >= 1? (Cmds) buf[0] : Cmds::None;
   if (cmd == Cmds::MotionControl && len == (1 + sizeof(MotionControl))) {
-    auto mc = (const MotionControl*) (buf + 1);
+    MotionControl rxmc = *((const MotionControl*) (buf + 1));
+    rxmc.timestamp = millis();
     if (canPrint())
-      Serial.printf("MC: a%d fwd %06.2f yaw %06.2f pitch %06.2f roll %06.2f\n", mc->state, mc->fwd, mc->yaw, mc->pitch, mc->roll);
-    lastMotionCmd_ = *mc;
-    lastMotionCmd_.timestamp = millis();
+      Serial.printf("MC: a%d fwd %06.2f yaw %06.2f pitch %06.2f roll %06.2f\n", rxmc.state, rxmc.fwd, rxmc.yaw, rxmc.pitch, rxmc.roll);
+    lastMotionCmd_ = rxmc;
   }
 }
 
@@ -158,7 +158,7 @@ void Controller::loop() {
     for (int i = 0; i < NUM_DRIVES; i++)
       drives_[i]->requestStatus();
     lastPollStats = now;
-    if (canPrint() && !isLinkUp())
+    if (canPrint() && !isLinkUp(now))
       Serial.println("MAC: " + WiFi.macAddress());
   }
 #if 0
@@ -218,6 +218,10 @@ void Controller::loop() {
 
     bool csrfArm = crsf_.isLinkUp()? crsf_.getChannel(5) > 1500 : false;
     bool motionArm = lastMotionCmd_.state > 0;
+    if (crsf_.isLinkUp()) { //stil use crsf for speed control
+      maxSpeed_ = mapfloat(crsf_.getChannel(7), 1000, 2000, 6, 30); //aux 2: speed selection
+    }
+
     if (crsf_.isLinkUp() && csrfArm) {
       arm = csrfArm;
       yawCtrlEnabled_ = crsf_.getChannel(6) > 1400 && crsf_.getChannel(6) < 1600;
@@ -237,9 +241,10 @@ void Controller::loop() {
       }
 
     // --- ESP-NOW Tx / Rx --- //
-    } else if (lastMotionCmd_.timestamp > (now - 300) && motionArm) {
+    } else if (lastMotionCmd_.timestamp > (now - 400) && motionArm) {
       arm = motionArm;
-      maxSpeed_ = 18;
+      if (!crsf_.isLinkUp())
+        maxSpeed_ = 18;
       fwd = mapfloat(lastMotionCmd_.fwd, -1, 1, -maxSpeed_, maxSpeed_);
       yaw = mapfloat(lastMotionCmd_.yaw, -1, 1, -maxSpeed_, maxSpeed_);
       side = mapfloat(lastMotionCmd_.roll, -30, 30, -maxSpeed_, maxSpeed_); //this is in degrees tilt
@@ -249,7 +254,6 @@ void Controller::loop() {
       arm = false;
       yawCtrlEnabled_ = false;
       isBalancing_ = false;
-      lastMotionCmd_ = MotionControl();
     }
 
     //main control loop
@@ -322,9 +326,9 @@ void Controller::loop() {
         }
       }
 
-      if (lastLinkUp_ != isLinkUp())
+      if (lastLinkUp_ != isLinkUp(now))
         redrawLCD_ = true;
-      lastLinkUp_ = isLinkUp();
+      lastLinkUp_ = isLinkUp(now);
     } // validCount
     lastDrive = now;
   }
@@ -380,9 +384,9 @@ void Controller::drawLCD(const uint32_t now) {
   auto fg = BLACK;
   auto pageBG = BLACK;
   auto validCount = getValidDriveCount();
-
-  String title = (isLinkUp()? "ready" : "NO LINK");
-  if (!isLinkUp()) bgRainbow = RED;
+  auto link = isLinkUp(now);
+  String title = (link? "ready" : "NO LINK");
+  if (!link) bgRainbow = RED;
   if (isBalancing_) title = "balancing!";
   if (!validCount) {
     title = "no drives!";
