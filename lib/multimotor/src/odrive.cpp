@@ -39,11 +39,11 @@ int16_t ODriveDriver::getValidDriveIDFromMsg(uint32_t canID, const uint8_t* data
     if (len != 8) return -1;
     uint8_t id = canID >> 5;
     CmdIDs cmd = (CmdIDs) (canID & 0x1F);
-    if (id <= 1) return -1; //invalid ID
-    if (canID & 0xFFFFF800) return -1; //has extended frame ID bits! not ours
+    if (id <= 1) return -2; //invalid ID
+    if (canID & 0xFFFFF800) return -3; //has extended frame ID bits! not ours
     if (cmd == CmdIDs::Heartbeat || cmd == CmdIDs::GetEncoderEstimates || cmd == CmdIDs::GetBusVoltageCurrent)
         return id;
-    return -1;
+    return -4;
 }
 
 String ODriveDriver::getName() const {

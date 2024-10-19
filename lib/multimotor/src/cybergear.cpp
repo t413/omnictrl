@@ -21,24 +21,28 @@ enum Addresses {
     AddrPosSetpoint   = 0x7016,
 };
 
+uint32_t mkID(uint8_t cmd, uint8_t opthi, uint8_t optlo, uint8_t id) {
+    return (cmd << 24) | (opthi << 16) | (optlo << 8) | id;
+}
+
+union Header {
+    uint32_t canid;
+    struct { uint8_t bid, lo, hi, cmd; };
+};
+
 CyberGearDriver::CyberGearDriver(uint8_t id, CanInterface* can) : id_(id), can_(can) { }
 
 int16_t CyberGearDriver::getValidDriveIDFromMsg(uint32_t canID, const uint8_t* data, uint8_t len) {
     if (len != 8) return -1;
-    uint8_t id = canID & 0xFF;
-    uint8_t cmd = (canID >> 24) & 0xFF;
-    if (!id || !cmd) return -1;
-    if (cmd == CmdRequest) //TODO .. others?
-        return id;
-    return -1;
+    Header h;
+    h.canid = canID;
+    if (h.bid == 0 && h.cmd == CmdRequest)
+        return h.lo;
+    return -2;
 }
 
 String CyberGearDriver::getName() const {
     return String("CyberGear") + String(id_);
-}
-
-uint32_t mkID(uint8_t cmd, uint8_t opthi, uint8_t optlo, uint8_t id) {
-    return (cmd << 24) | (opthi << 16) | (optlo << 8) | id;
 }
 
 void CyberGearDriver::requestStatus() {

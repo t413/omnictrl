@@ -70,6 +70,10 @@ void Controller::setup() {
 
   twaiInterface_.setup(PIN_CAN_RX, PIN_CAN_TX, &Serial);
 
+  // --- manually add drives --- //
+  for (int i = 0; i < 3; i++)
+    drives_[i] = new CyberGearDriver(CYBERGEAR_START_ADDR + i, &twaiInterface_);
+
   if (canPrint())
     Serial.printf("finished CAN setup\n");
 
@@ -108,7 +112,7 @@ uint8_t Controller::getValidDriveCount(uint32_t validTime) const {
 MotorDrive* Controller::add(MotorDrive* drive) {
   for (int i = 0; i < MAX_DRIVES; i++)
     if (!drives_[i])
-      return drives_[i] = drive;
+      return (drives_[i] = drive);
   return nullptr;
 }
 
@@ -121,19 +125,25 @@ uint32_t lastClear = 0;
 void Controller::loop() {
   uint32_t now = millis();
 
-  if ((now - lastPollStats) > 500) {
+  if ((now - lastPollStats) > 200) {
     uint8_t validCount = 0;
+    if (canPrint())
+      Serial.printf("polling %d drives\n", getValidDriveCount(0));
     for (int i = 0; i < MAX_DRIVES; i++)
       if (drives_[i]) {
+        if (canPrint())
+          Serial.printf("d[%d](%x): ", i, drives_[i]->getID());
         drives_[i]->requestStatus();
         validCount++;
       }
+#if 0
     if (validCount < 3) {
       if (canPrint())
         Serial.printf("only %d drives! trying to query.\n", validCount);
       CyberGearDriver requester(CYBERGEAR_START_ADDR + validCount, &twaiInterface_);
       requester.requestStatus();
     }
+#endif
     lastPollStats = now;
   }
 
@@ -306,20 +316,20 @@ void Controller::handleCAN(const CanMessage& msg, uint32_t now) {
     if (drives_[i] && drives_[i]->handleIncoming(msg.id, msg.data, msg.len, now))
       return; //handled!
   }
+  if (now < 2000) return; //skip during init
+  auto odid = ODriveDriver::getValidDriveIDFromMsg(msg.id, msg.data, msg.len);
+  auto cgid = CyberGearDriver::getValidDriveIDFromMsg(msg.id, msg.data, msg.len);
   if (canPrint()) { //fallthrough to print unhandled
     Serial.printf("> rx id=0x%x len=%d: {", msg.id, msg.len);
     for (int i = 0; i < msg.len; i++)
       Serial.printf("0x%02x, ", msg.data[i]);
-    Serial.println("}");
+    Serial.printf("} odid %d cgid %d\n", odid, cgid);
   }
-  if (now < 2000) return; //skip during init
-  auto odid = ODriveDriver::getValidDriveIDFromMsg(msg.id, msg.data, msg.len);
-  auto cgid = CyberGearDriver::getValidDriveIDFromMsg(msg.id, msg.data, msg.len);
   if (odid >= 0) {
-    if (canPrint()) Serial.printf("found new valid odrive id %d\n", odid);
+    if (canPrint()) Serial.printf("found new valid odrive id %x\n", odid);
     add(new ODriveDriver(odid, &twaiInterface_))->enable(false);
   } else if (cgid >= 0) {
-    if (canPrint()) Serial.printf("found new valid drive id %d\n", cgid);
+    if (canPrint()) Serial.printf("found new valid drive id %x\n", cgid);
     add(new CyberGearDriver(cgid, &twaiInterface_))->enable(false);
   }
 }
@@ -351,7 +361,7 @@ void Controller::drawLCD(const uint32_t now) {
   auto bgRainbow = rainbowColor((now >> 2) % 1000 / 1000.0);
   auto fg = BLACK;
   auto pageBG = BLACK;
-  auto validCount = getValidDriveCount(0);
+  auto validCount = getValidDriveCount(1000);
 
   String title = (crsf_.isLinkUp()? "ready" : "NO LINK");
   if (!crsf_.isLinkUp()) bgRainbow = RED;
