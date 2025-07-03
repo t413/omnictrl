@@ -80,6 +80,12 @@ void ODriveDriver::setSpeed(float speed) {
     send(CmdIDs::SetInputVel, p.bytes);
 }
 
+void ODriveDriver::setCurrent(float current) {
+    Payload p;
+    p.floats[0] = current;
+    send(CmdIDs::SetInputTorque, p.bytes);
+}
+
 bool ODriveDriver::handleIncoming(uint32_t id, uint8_t* data, uint8_t len, uint32_t now) {
     uint8_t inCanId = id >> 5;
     if (inCanId != id_) return false;

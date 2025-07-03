@@ -18,6 +18,7 @@ enum Cmds {
 enum Addresses {
     AddrRunMode = 0x7005,
     AddrSpeedSetpoint = 0x700A,
+    AddrCurrentSetpoint = 0x7006,
     AddrPosSetpoint   = 0x7016,
 };
 
@@ -51,6 +52,12 @@ void CyberGearDriver::setPos(float pos) {
 void CyberGearDriver::setSpeed(float speed) {
     uint8_t data[8] = { AddrSpeedSetpoint & 0x00FF, AddrSpeedSetpoint >> 8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     memcpy(&data[4], &speed, 4);
+    if (can_) can_->send(mkID(CmdRamWrite, 0, 0, id_), data, 8);
+}
+
+void CyberGearDriver::setCurrent(float curr) {
+    uint8_t data[8] = { AddrCurrentSetpoint & 0x00FF, AddrCurrentSetpoint >> 8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    memcpy(&data[4], &curr, 4);
     if (can_) can_->send(mkID(CmdRamWrite, 0, 0, id_), data, 8);
 }
 

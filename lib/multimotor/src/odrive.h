@@ -32,6 +32,7 @@ public:
     void enable(bool enable) override;
     void setSpeed(float speed) override;
     void setPos(float pos) override;
+    void setCurrent(float) override;
     bool handleIncoming(uint32_t id, uint8_t* data, uint8_t len, uint32_t now) override;
     uint32_t getLastStatusTime() const override { return lastStatusTime_; }
     uint32_t getLastFaults() const override { return lastFaults_; }
