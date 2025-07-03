@@ -13,12 +13,18 @@ enum Cmds {
     CmdRamRead               = 0x11,
     CmdRamWrite              = 0x12,
     CmdGetStatus             = 0x15,
+    CmdReadParamLower        = 0x17,
+    CmdReadParamUpper        = 0x18,
+    CmdWriteParamLower       = 0x19,
+    CmdWriteParamUpper       = 0x1A,
 };
 
 enum Addresses {
     AddrRunMode = 0x7005,
     AddrSpeedSetpoint = 0x700A,
     AddrPosSetpoint   = 0x7016,
+    AddrVBUS = 0x701C,  // Bus voltage parameter
+    PARAM_UPPER_ADDR = 0x7000,  // Threshold for upper/lower commands
 };
 
 CyberGearDriver::CyberGearDriver(uint8_t id, CanInterface* can) : id_(id), can_(can) { }
@@ -54,6 +60,14 @@ void CyberGearDriver::setSpeed(float speed) {
     if (can_) can_->send(mkID(CmdRamWrite, 0, 0, id_), data, 8);
 }
 
+void CyberGearDriver::fetchVBus() {
+    uint8_t data[8] = {0x00};
+    data[0] = AddrVBUS & 0x00FF;  // Low byte of address
+    data[1] = AddrVBUS >> 8;      // High byte of address
+    // Use upper param read command since VBUS address >= 0x7000
+    if (can_) can_->send(mkID(CmdReadParamUpper, 0, 0, id_), data, 8);
+}
+
 bool CyberGearDriver::handleIncoming(uint32_t id, uint8_t* data, uint8_t len, uint32_t now) {
     uint8_t msgtype = (id & 0xFF000000) >> 24; //bits 24-28
     uint8_t driveid = (id & 0x0000FF00) >> 8; //bits 8-15
@@ -73,6 +87,16 @@ bool CyberGearDriver::handleIncoming(uint32_t id, uint8_t* data, uint8_t len, ui
             for (int i = 0; i < len; i++)
                 Serial.printf("0x%02x, ", data[i]);
             Serial.println("}");
+        }
+        return true;
+    } else if (msgtype == CmdReadParamLower || msgtype == CmdReadParamUpper) {
+        // Parameter response - extract address and value
+        uint16_t addr = data[0] | (data[1] << 8);
+        if (addr == AddrVBUS && len >= 8) {
+            // VBUS is a float stored in bytes 4-7
+            memcpy(&vbus_, &data[4], 4);
+            if (Serial && Serial.availableForWrite())
+                Serial.printf("drive %x: VBUS = %.2f V\n", id_, vbus_);
         }
         return true;
     } else {

@@ -38,5 +38,8 @@ public:
 
     void setMode(OdriveCtrlMode);
     void send(CmdIDs cmd, uint8_t* data, uint8_t len = 8, bool ss = true, bool rtr = false);
+
+    void fetchVBus() override { }
+    float getVBus() const { return lastVolt_;}
 };
 
