@@ -30,6 +30,7 @@ const uint8_t DRIVE_IDS[NUM_DRIVES] = {0};
 
 #define MAX_TILT 20.0
 constexpr uint32_t IMU_UPDATE_PERIOD = 20; //ms
+#define LOW_BATTERY_VOLTAGE 21.0
 
 bool canPrint() {
   #if ARDUINO_USB_CDC_ON_BOOT
@@ -164,8 +165,10 @@ void Controller::loop() {
   uint32_t now = millis();
 
   if ((now - lastPollStats) > 500) {
-    for (int i = 0; i < NUM_DRIVES; i++)
+    for (int i = 0; i < NUM_DRIVES; i++) {
       drives_[i]->requestStatus();
+      drives_[i]->fetchVBus();  // Also request VBUS parameter
+    }
     lastPollStats = now;
     if (canPrint() && !isLinkUp(now))
       Serial.println("MAC: " + WiFi.macAddress());
@@ -406,11 +409,16 @@ void Controller::drawLCD(const uint32_t now) {
   auto pageBG = BLACK;
   auto validCount = getValidDriveCount();
   auto link = isLinkUp(now);
+  float vbus = drives_[0]->getVBus();  // Get VBUS from first drive
   String title = (link? "ready" : "NO LINK");
   if (!link) bgRainbow = RED;
   if (isBalancing_) title = "balancing!";
   if (!validCount) {
     title = "no drives!";
+    bgRainbow = RED;
+  }
+  if (vbus < LOW_BATTERY_VOLTAGE) {
+    title = "low batt!";
     bgRainbow = RED;
   }
   if (bgRainbow == RED) { fg = WHITE; pageBG = SUPERDARKRED; }
@@ -441,6 +449,11 @@ void Controller::drawLCD(const uint32_t now) {
     lcd_->setTextColor(WHITE, BLACK);
     lcd_->setFont(&FreeMono12pt7b);
     lcd_->printf(" %0.1fV\n", M5.Power.getBatteryVoltage() / 1000.0);
+  } else if (selectedTune_ == NUM_ADJUSTABLES || vbus < LOW_BATTERY_VOLTAGE) {
+    lcd_->setFont(&FreeSansBold18pt7b);
+    lcd_->setTextColor(WHITE, pageBG);
+    String vbusStr = String(vbus, 1) + "V";
+    drawCentered(vbusStr.c_str(), lcd_, pageBG);
   }
 
   //next show odrive status

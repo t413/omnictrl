@@ -25,4 +25,6 @@ public:
     virtual uint32_t getLastFaults() const = 0;
 
     virtual MotorState getMotorState() const = 0;
+    virtual void fetchVBus() = 0;
+    virtual float getVBus() const = 0;
 };

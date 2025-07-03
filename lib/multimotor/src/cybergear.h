@@ -9,8 +9,9 @@ class CyberGearDriver : public MotorDrive {
     uint8_t lastFaults_ = 0;
     uint32_t lastStatusTime_ = 0;
     bool enabled_ = false;
-
     MotorState lastStatus_; // Holds the state of the motor
+    float vbus_ = 0.0f;  // Cached VBUS value
+
 public:
     CyberGearDriver(uint8_t id, CanInterface* can);
 
@@ -25,5 +26,8 @@ public:
     MotorState getMotorState() const override { return lastStatus_; }
     void setCyberMode(uint8_t mode);
     void setEnable(bool enable);
+
+    void fetchVBus() override;
+    float getVBus() const override { return vbus_; }
 };
 
