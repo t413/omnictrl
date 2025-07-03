@@ -15,6 +15,8 @@ class CyberGearDriver : public MotorDrive {
     uint8_t lastFaults_ = 0;
     uint32_t lastStatusTime_ = 0;
     bool enabled_ = false;
+
+    MotorState lastStatus_; // Holds the state of the motor
 public:
     CyberGearDriver(uint8_t id, CanInterface* can);
 
@@ -31,6 +33,7 @@ public:
     uint32_t getLastStatusTime() const override { return lastStatusTime_; }
     uint32_t getLastFaults() const override { return lastFaults_; }
 
+    MotorState getMotorState() const override { return lastStatus_; }
     void setMode(CyberGearMode mode);
 };
 

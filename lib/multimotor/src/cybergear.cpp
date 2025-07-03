@@ -3,6 +3,19 @@
 #include <string.h>
 #include <Arduino.h> // just for Serial!
 
+#define P_MIN (-12.5f)
+#define P_MAX (12.5f)
+#define V_MIN (-30.0f)
+#define V_MAX (30.0f)
+#define T_MIN (-12.0f)
+#define T_MAX (12.0f)
+
+float uint_to_float(uint16_t value, float value_min, float value_max) {
+    uint16_t int_max = 0xFFFF;
+    float span = value_max - value_min;
+    return (float)value / int_max * span + value_min;
+}
+
 enum Cmds {
     CmdPosition              =  0x1,
     CmdRequest               =  0x2,
@@ -65,11 +78,23 @@ bool CyberGearDriver::handleIncoming(uint32_t id, uint8_t* data, uint8_t len, ui
     uint8_t msgtype = (id & 0xFF000000) >> 24; //bits 24-28
     uint8_t driveid = (id & 0x0000FF00) >> 8; //bits 8-15
     if (driveid != id_) return false;
+
     if (msgtype == CmdRequest) { //status message reply!
-        uint8_t mode  = (id & 0x00C00000) >> 22; //bits 22-23 = [mode]
+        uint16_t pos_data = data[1] | (data[0] << 8);
+        uint16_t vel_data = data[3] | (data[2] << 8);
+        uint16_t torque_data = data[5] | (data[4] << 8);
+        uint16_t raw_temp = data[7] | (data[6] << 8);
+
+        MotorState updated = {};
+        updated.position = uint_to_float(pos_data, P_MIN, P_MAX);
+        updated.velocity = uint_to_float(vel_data, V_MIN, V_MAX);
+        updated.torque = uint_to_float(torque_data, T_MIN, T_MAX);
+        updated.temperature = raw_temp ? (float)raw_temp / 10.0f : 0.0f;
+
+        updated.mode_status = (id & 0x00C00000) >> 22; // bits 22-23
         lastFaults_   = (id & 0x003F0000) >> 16; //bits 16-21 = [Uncalibrated, hall, magsense, overtemp, overcurrent, undervolt]
-        //TODO read data payload
-        enabled_ = (mode == 2);
+        lastStatus_ = updated; // Update the last status with the new values
+        enabled_ = (updated.mode_status == 2);
         lastStatusTime_ = now;
         if (Serial && Serial.availableForWrite())
             Serial.print(".");
