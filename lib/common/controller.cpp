@@ -80,7 +80,7 @@ void Controller::setup() {
   }
 
   for (int i = 0; i < NUM_DRIVES; i++) {
-    drives_[i]->enable(false); //disable all drives
+    drives_[i]->setMode(MotorMode::Disabled); // start with disabled mode
     // drives_[i]->driver_.set_position_ref(0.0); // set initial rotor position
   }
 
@@ -266,8 +266,7 @@ void Controller::loop() {
         if (canPrint())
           Serial.printf("SETTING STATE %s\n", arm? "ARM" : "DISARM");
         for (int i = 0; i < NUM_DRIVES; i++) {
-          drives_[i]->setModeSpeed();
-          drives_[i]->enable(arm);
+          drives_[i]->setMode(arm? MotorMode::Speed : MotorMode::Disabled);
           yawCtrl_.reset();
           balanceCtrl_.reset();
         }
@@ -275,7 +274,7 @@ void Controller::loop() {
         redrawLCD_ = true;
       }
 
-      float vels[NUM_DRIVES] = {0};
+      float outputs[NUM_DRIVES] = {0};
       yawCtrl_.limit = maxSpeed_; //TODO filter this
       float y = yawCtrlEnabled_? yawCtrl_.update(now, (-yaw * 100) - gyroZ) : -yaw; //convert yaw to angular rate
 
@@ -302,9 +301,9 @@ void Controller::loop() {
         balanceCtrl_.reset();
       }
       // yaw, fwd, side
-      vels[BACK] = y  +   0   + side;
-      vels[LEFT] = y  - fwd   - side * 1.33/2;
-      vels[RGHT] = y  + fwd   - side * 1.33/2;
+      outputs[BACK] = y  +   0   + side;
+      outputs[LEFT] = y  - fwd   - side * 1.33/2;
+      outputs[RGHT] = y  + fwd   - side * 1.33/2;
 #elif NUM_DRIVES == 4
       #define BK_L 0
       #define BK_R 1
@@ -322,10 +321,8 @@ void Controller::loop() {
       //now output the drive commands
 
       if (arm) {
-        for (int i = 0; i < NUM_DRIVES; i++) {
-          if (i < NUM_DRIVES)
-            drives_[i]->setSpeed(vels[i]);
-        }
+        for (int i = 0; i < NUM_DRIVES; i++)
+          drives_[i]->setSetpoint(MotorMode::Speed, outputs[i]);
       }
 
       if (lastLinkUp_ != isLinkUp(now))

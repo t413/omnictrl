@@ -35,6 +35,32 @@ enum Addresses {
     AddrPosSetpoint   = 0x7016,
 };
 
+enum class CyberGearMode {
+    Unknown = 0,
+    Position = 1,
+    Speed = 2,
+    Current = 3,
+};
+
+CyberGearMode toCyberGearMode(MotorMode mode) {
+    switch (mode) {
+        case MotorMode::Position: return CyberGearMode::Position;
+        case MotorMode::Speed: return CyberGearMode::Speed;
+        case MotorMode::Current: return CyberGearMode::Current;
+        default: return CyberGearMode::Unknown;
+    }
+}
+
+MotorMode toMotorMode(CyberGearMode mode) {
+    switch (mode) {
+        case CyberGearMode::Position: return MotorMode::Position;
+        case CyberGearMode::Speed: return MotorMode::Speed;
+        case CyberGearMode::Current: return MotorMode::Current;
+        default: return MotorMode::Disabled;
+    }
+}
+
+
 CyberGearDriver::CyberGearDriver(uint8_t id, CanInterface* can) : id_(id), can_(can) { }
 
 uint32_t mkID(uint8_t cmd, uint8_t opthi, uint8_t optlo, uint8_t id) {
@@ -46,31 +72,37 @@ void CyberGearDriver::requestStatus() {
     if (can_) can_->send(mkID(CmdGetStatus, 0, 0, id_), data, 8);
 }
 
-void CyberGearDriver::setMode(CyberGearMode mode) {
+void CyberGearDriver::setCyberMode(uint8_t mode) {
     uint8_t data[8] = { AddrRunMode & 0x00FF, AddrRunMode >> 8, 0x00, 0x00, (uint8_t) mode, 0x00, 0x00, 0x00};
     if (can_) can_->send(mkID(CmdRamWrite, 0, 0, id_), data, 8);
 }
 
-void CyberGearDriver::enable(bool enable) {
+void CyberGearDriver::setEnable(bool enable) {
     uint8_t data[8] = {0x00};
     if (can_) can_->send(mkID(enable? CmdEnable : CmdStop, 0, 0, id_), data, 8);
 }
 
-void CyberGearDriver::setPos(float pos) {
-    uint8_t data[8] = { AddrPosSetpoint & 0x00FF, AddrPosSetpoint >> 8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    memcpy(&data[4], &pos, 4);
-    if (can_) can_->send(mkID(CmdRamWrite, 0, 0, id_), data, 8);
+void CyberGearDriver::setMode(MotorMode mode) {
+    CyberGearMode out = toCyberGearMode(mode);
+    if (out == CyberGearMode::Unknown) {
+        setEnable(false); //disable if unknown mode
+    } else {
+        setCyberMode((uint8_t)out);
+        setEnable(true);
+        lastStatus_.mode = mode;
+    }
 }
 
-void CyberGearDriver::setSpeed(float speed) {
-    uint8_t data[8] = { AddrSpeedSetpoint & 0x00FF, AddrSpeedSetpoint >> 8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    memcpy(&data[4], &speed, 4);
-    if (can_) can_->send(mkID(CmdRamWrite, 0, 0, id_), data, 8);
-}
-
-void CyberGearDriver::setCurrent(float curr) {
-    uint8_t data[8] = { AddrCurrentSetpoint & 0x00FF, AddrCurrentSetpoint >> 8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    memcpy(&data[4], &curr, 4);
+void CyberGearDriver::setSetpoint(MotorMode mode, float value) {
+    uint16_t addr;
+    switch (mode) {
+        case MotorMode::Position: addr = AddrPosSetpoint; break;
+        case MotorMode::Speed:    addr = AddrSpeedSetpoint; break;
+        case MotorMode::Current:  addr = AddrCurrentSetpoint; break;
+        default: return;
+    }
+    uint8_t data[8] = { addr & 0x00FF, addr >> 8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+    memcpy(&data[4], &value, 4);
     if (can_) can_->send(mkID(CmdRamWrite, 0, 0, id_), data, 8);
 }
 
@@ -91,10 +123,11 @@ bool CyberGearDriver::handleIncoming(uint32_t id, uint8_t* data, uint8_t len, ui
         updated.torque = uint_to_float(torque_data, T_MIN, T_MAX);
         updated.temperature = raw_temp ? (float)raw_temp / 10.0f : 0.0f;
 
-        updated.mode_status = (id & 0x00C00000) >> 22; // bits 22-23
+        uint8_t inmode = (id & 0x00C00000) >> 22; // bits 22-23
+        updated.mode = toMotorMode((CyberGearMode)inmode);
         lastFaults_   = (id & 0x003F0000) >> 16; //bits 16-21 = [Uncalibrated, hall, magsense, overtemp, overcurrent, undervolt]
         lastStatus_ = updated; // Update the last status with the new values
-        enabled_ = (updated.mode_status == 2);
+        enabled_ = (updated.mode != MotorMode::Disabled);
         lastStatusTime_ = now;
         if (Serial && Serial.availableForWrite())
             Serial.print(".");

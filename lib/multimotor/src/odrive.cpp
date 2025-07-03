@@ -55,35 +55,37 @@ union Payload {
     float    floats[2];
 };
 
-void ODriveDriver::setMode(OdriveCtrlMode mode) {
+void ODriveDriver::setOdriveMode(OdriveCtrlMode mode) {
     Payload p;
     p.dwords[0] = (uint32_t) mode;
     p.dwords[1] = 1; //passtrough input mode
     send(CmdIDs::SetControllerMode, p.bytes);
 }
 
-void ODriveDriver::enable(bool enable) {
+void ODriveDriver::setOdriveEnable(bool enable) {
     Payload p;
     p.dwords[0] = enable ? 8 : 0; //Closed loop control
     send(CmdIDs::SetAxisState, p.bytes, 8, false); //no single shot (enables retries)
 }
 
-void ODriveDriver::setPos(float pos) {
-    Payload p;
-    p.floats[0] = pos;
-    send(CmdIDs::SetInputPos, p.bytes);
+void ODriveDriver::setMode(MotorMode mode) {
+    if (mode == MotorMode::Disabled) {
+        setOdriveEnable(false); //disable before setting mode
+    } else {
+        OdriveCtrlMode odriveMode = (mode == MotorMode::Speed) ? OdriveCtrlMode::Velocity :
+                       (mode == MotorMode::Current) ? OdriveCtrlMode::Torque :
+                       OdriveCtrlMode::Position;
+        setOdriveMode(odriveMode);
+        setOdriveEnable(true);
+    }
 }
 
-void ODriveDriver::setSpeed(float speed) {
+void ODriveDriver::setSetpoint(MotorMode mode, float value) {
     Payload p;
-    p.floats[0] = speed;
-    send(CmdIDs::SetInputVel, p.bytes);
-}
-
-void ODriveDriver::setCurrent(float current) {
-    Payload p;
-    p.floats[0] = current;
-    send(CmdIDs::SetInputTorque, p.bytes);
+    p.floats[0] = value;
+    CmdIDs cmd = (mode == MotorMode::Position) ? CmdIDs::SetInputPos :
+                 (mode == MotorMode::Speed)    ? CmdIDs::SetInputVel : CmdIDs::SetInputTorque;
+    send(cmd, p.bytes);
 }
 
 bool ODriveDriver::handleIncoming(uint32_t id, uint8_t* data, uint8_t len, uint32_t now) {
