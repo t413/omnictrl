@@ -158,40 +158,39 @@ void Controller::handleRxPacket(const uint8_t* buf, uint8_t len) {
 uint32_t lastDraw = 0;
 uint32_t lastDrive = 1000;
 uint32_t lastPollStats = 0;
+uint32_t lastRefreshDrives = 0;
 uint32_t lastTxStats = 0;
 uint32_t lastClear = 0;
 
 void Controller::loop() {
   uint32_t now = millis();
 
-  if ((now - lastPollStats) > 500) {
+  if ((now - lastPollStats) > 200) {
     for (int i = 0; i < NUM_DRIVES; i++) {
-      drives_[i]->requestStatus();
       drives_[i]->fetchVBus();  // Also request VBUS parameter
+      auto v = drives_[i]->getVBus();
+      if (vbusFiltered_ < 0.1 && v > 0.1)
+        vbusFiltered_ = v; // initialize filtered VBUS
+      vbusFiltered_ = 0.9 * vbusFiltered_ + 0.1 * v; // simple low-pass filter
+    }
+    if (vbusFiltered_ < (LOW_BATTERY_VOLTAGE - 0.2) && lastState_) {
+      for (int i = 0; i < NUM_DRIVES; i++)
+          drives_[i]->setMode(MotorMode::Disabled);
     }
     lastPollStats = now;
     if (canPrint() && !isLinkUp(now))
       Serial.println("MAC: " + WiFi.macAddress());
   }
-#if 0
   if (((now - lastTxStats) > 100) && crsf_.isLinkUp()) {
     crsf_sensor_battery_t crsfBatt = {
-      .voltage = htobe16((uint16_t)(lastBusStatus_.Bus_Voltage * 10.0)),
-      .current = htobe16((uint16_t)(lastBusStatus_.Bus_Current * 10.0)),
+      .voltage = htobe16((uint16_t)(vbusFiltered_ * 10.0)),
+      .current = htobe16((uint16_t)(0 * 10.0)),
       .capacity = htobe16((uint16_t)(0)) << 8,
       .remaining = (uint8_t)(0),
     };
     crsf_.queuePacket(CRSF_SYNC_BYTE, CRSF_FRAMETYPE_BATTERY_SENSOR, &crsfBatt, sizeof(crsfBatt));
     lastTxStats = now;
-
-    if (canPrint()) {
-      for (int i = 0; i < NUM_DRIVES; i++) {
-        Serial.printf("o%d: e%x s%d\n", i, lastHeartbeats_[i].Axis_Error, lastHeartbeats_[i].Axis_State);
-      }
-      Serial.println();
-    }
   }
-#endif
 
   #ifdef IS_M5
   M5.update(); //updates buttons, etc
@@ -202,8 +201,17 @@ void Controller::loop() {
   #endif
   float* tunable = selectedTune_ < NUM_ADJUSTABLES? adjustables_[selectedTune_] : NULL;
 
+  if ((now - lastRefreshDrives) > (IMU_UPDATE_PERIOD - 2)) {
+    for (int i = 0; i < NUM_DRIVES; i++) {
+      drives_[i]->requestStatus();
+    }
+    Serial.print("-");
+    lastRefreshDrives = now; //also updated below, to keep in sync with IMU updates
+  }
+
   if ((now - lastDrive) > IMU_UPDATE_PERIOD) {
     updateIMU();
+    Serial.print("*");
 
     float q[4] = {0};
     imuFilt_.getQuaternion(q);
@@ -355,6 +363,7 @@ void Controller::loop() {
       lastLinkUp_ = isLinkUp(now);
     } // validCount
     lastDrive = now;
+    lastRefreshDrives = now; //keep drive refresh in sync with this task
   }
 
   if ((now - lastDraw) > 60 || redrawLCD_) {
@@ -409,15 +418,13 @@ void Controller::drawLCD(const uint32_t now) {
   auto pageBG = BLACK;
   auto validCount = getValidDriveCount();
   auto link = isLinkUp(now);
-  float vbus = drives_[0]->getVBus();  // Get VBUS from first drive
   String title = (link? "ready" : "NO LINK");
   if (!link) bgRainbow = RED;
   if (isBalancing_) title = "balancing!";
   if (!validCount) {
     title = "no drives!";
     bgRainbow = RED;
-  }
-  if (vbus < LOW_BATTERY_VOLTAGE) {
+  } else if (vbusFiltered_ < LOW_BATTERY_VOLTAGE) {
     title = "low batt!";
     bgRainbow = RED;
   }
@@ -449,10 +456,10 @@ void Controller::drawLCD(const uint32_t now) {
     lcd_->setTextColor(WHITE, BLACK);
     lcd_->setFont(&FreeMono12pt7b);
     lcd_->printf(" %0.1fV\n", M5.Power.getBatteryVoltage() / 1000.0);
-  } else if (selectedTune_ == NUM_ADJUSTABLES || vbus < LOW_BATTERY_VOLTAGE) {
+  } else if (selectedTune_ == NUM_ADJUSTABLES || vbusFiltered_ < LOW_BATTERY_VOLTAGE) {
     lcd_->setFont(&FreeSansBold18pt7b);
     lcd_->setTextColor(WHITE, pageBG);
-    String vbusStr = String(vbus, 1) + "V";
+    String vbusStr = String(vbusFiltered_, 1) + "V";
     drawCentered(vbusStr.c_str(), lcd_, pageBG);
   }
 

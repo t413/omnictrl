@@ -30,6 +30,7 @@ class Controller {
   float fwdSpeed_ = 0.0; //fwd/back speed from motor drives
   float yawSpeed_ = 0.0;
   float maxSpeed_ = 0.0;
+  float vbusFiltered_ = 0.0;
   bool yawCtrlEnabled_ = false;
   bool isBalancing_ = false;
   bool redrawLCD_ = false;
