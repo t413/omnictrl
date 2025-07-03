@@ -130,6 +130,13 @@ uint8_t Controller::getValidDriveCount() const {
   return validCount;
 }
 
+void Controller::resetPids() {
+  yawCtrl_.reset();
+  balanceCtrl_.reset();
+  balanceSpeedCtrl_.reset();
+  balanceYawCtrl_.reset();
+}
+
 void Controller::handleRxPacket(const uint8_t* buf, uint8_t len) {
   if (canPrint()) {
     Serial.printf("RX(%d): [", len);
@@ -216,6 +223,7 @@ void Controller::loop() {
     //control inputs
     float fwd = 0, side = 0, yaw = 0, thr = 0;
     bool arm = lastState_;
+    bool balanceChange = false;
     // --- CRSF Rx --- //
 
     bool csrfArm = crsf_.isLinkUp()? crsf_.getChannel(5) > 1500 : false;
@@ -230,7 +238,7 @@ void Controller::loop() {
       bool balanceModeEnabled_ = crsf_.getChannel(6) > 1600;
       bool enableAdjustment = (yawCtrlEnabled_ || balanceModeEnabled_) && (crsf_.getChannel(8) > 1500);
       maxSpeed_ = mapfloat(crsf_.getChannel(7), 1000, 2000, 6, 30); //aux 2: speed selection
-      isBalancing_ = (balanceModeEnabled_ && isUpOnEnd);
+      isUpOnEnd &= balanceModeEnabled_;
 
       fwd = mapfloat(crsf_.getChannel(2), 1000, 2000, -maxSpeed_, maxSpeed_);
       side = mapfloat(crsf_.getChannel(1), 1000, 2000, -maxSpeed_, maxSpeed_);
@@ -251,11 +259,16 @@ void Controller::loop() {
       yaw = mapfloat(lastMotionCmd_.yaw, -1, 1, -maxSpeed_, maxSpeed_);
       side = mapfloat(lastMotionCmd_.roll, -30, 30, -maxSpeed_, maxSpeed_); //this is in degrees tilt
       side = constrain(side, -maxSpeed_, maxSpeed_);
-      isBalancing_ = isUpOnEnd;
     } else { // no control input
       arm = false;
       yawCtrlEnabled_ = false;
-      isBalancing_ = false;
+      isUpOnEnd = false;
+    }
+    if (isBalancing_ != isUpOnEnd) {
+      isBalancing_ = isUpOnEnd;
+      if (canPrint()) Serial.printf("Balancing mode %s\n", isUpOnEnd? "enabled" : "disabled");
+      resetPids();
+      balanceChange = true;
     }
 
     //main control loop
@@ -267,14 +280,12 @@ void Controller::loop() {
           Serial.printf("SETTING STATE %s\n", arm? "ARM" : "DISARM");
         for (int i = 0; i < NUM_DRIVES; i++) {
           drives_[i]->setMode(arm? MotorMode::Speed : MotorMode::Disabled);
-          yawCtrl_.reset();
-          balanceCtrl_.reset();
         }
+        resetPids();
         lastState_ = arm? 1 : 0;
         redrawLCD_ = true;
       }
 
-      float outputs[NUM_DRIVES] = {0};
       yawCtrl_.limit = maxSpeed_; //TODO filter this
       float y = yawCtrlEnabled_? yawCtrl_.update(now, (-yaw * 100) - gyroZ) : -yaw; //convert yaw to angular rate
 
@@ -282,28 +293,44 @@ void Controller::loop() {
       #define BACK 0
       #define RGHT 1
       #define LEFT 2
-      if (isBalancing_) {
-        //balance mode
-        float pitch = pitchFwd;
-        float pitchGoal = balanceSpeedCtrl_.update(now, filteredFwdSpeed_ - fwd, balanceCtrl_.getPrevOut() - fwd);
-        float pctrl = balanceCtrl_.update(now, pitchGoal - pitch); //goal is pitch at 0
-        filteredFwdSpeed_ = filteredFwdSpeed_ * (1 - filteredFwdSpeedAlpha_) + pctrl * filteredFwdSpeedAlpha_;
-        if (canPrint()) {
-          Serial.printf("(speed %06.2f, fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> pctrl %06.2f\n",
-            filteredFwdSpeed_, fwd, pitchGoal, pitch, pctrl);
+
+      fwdSpeed_ = yawSpeed_ = 0;
+      for (int i = 0; i < NUM_DRIVES; i++) {
+        float v = drives_[i]->getMotorState().velocity;
+        if (i != BACK) {
+          fwdSpeed_ += v * (i == RGHT? 1 : -1); //left is positive, right is negative
+          yawSpeed_ += v;
         }
-        // if (endIdx == 0) { //fwd balancing
-        fwd = pctrl;
-        y += -side; //roll also controlls yaw when balancing
+      }
+      fwdSpeed_ /= 2;
+      yawSpeed_ /= 2;
+
+      if (balanceChange) {
+        for (int d = 0; d < NUM_DRIVES; d++)
+          if (d != BACK) //back stays in speed mode
+            drives_[d]->setMode(isBalancing_? MotorMode::Current : MotorMode::Speed);
+      }
+
+      if (isBalancing_) {
+        float pitchGoal = balanceSpeedCtrl_.update(now, fwdSpeed_ - fwd); //input is speed, setpoint is [user fwd]
+        float torqueCmd = balanceCtrl_.update(now, pitchGoal - pitchFwd); //input is angle
+        if (canPrint()) {
+          Serial.printf("(fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> torque %06.2f\n",
+            fwd, pitchGoal, pitchFwd, torqueCmd);
+        }
+        fwd = torqueCmd; // Use torque output directly
+
+        y = balanceYawCtrl_.update(now, (y + -side) - yawSpeed_); //input is speed, output is torque
         side = 0; //disable side
       } else {
         balanceSpeedCtrl_.reset();
         balanceCtrl_.reset();
       }
-      // yaw, fwd, side
-      outputs[BACK] = y  +   0   + side;
-      outputs[LEFT] = y  - fwd   - side * 1.33/2;
-      outputs[RGHT] = y  + fwd   - side * 1.33/2;
+      if (arm) {
+        drives_[BACK]->setSetpoint(MotorMode::Speed, isBalancing_? yawSpeed_ : (y  +   0   + side));
+        drives_[LEFT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  - fwd   - side * 1.33/2);
+        drives_[RGHT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  + fwd   - side * 1.33/2);
+      }
 #elif NUM_DRIVES == 4
       #define BK_L 0
       #define BK_R 1
@@ -319,11 +346,6 @@ void Controller::loop() {
 #warning "unsupported motor count, is: NUM_DRIVES"
 #endif
       //now output the drive commands
-
-      if (arm) {
-        for (int i = 0; i < NUM_DRIVES; i++)
-          drives_[i]->setSetpoint(MotorMode::Speed, outputs[i]);
-      }
 
       if (lastLinkUp_ != isLinkUp(now))
         redrawLCD_ = true;
@@ -459,6 +481,10 @@ void Controller::drawLCD(const uint32_t now) {
   M5.Lcd.setFont(&FreeMono9pt7b);
   M5.Lcd.setTextColor(WHITE, BLACK);
   M5.Lcd.printf("p%0.1f", imuFilt_.getPitchDegree());
+
+  M5.Lcd.setFont(&FreeMono9pt7b);
+  M5.Lcd.setTextColor(YELLOW, BLACK);
+  M5.Lcd.printf("\nva%0.1f", fwdSpeed_);
 
   //bottom aligned
   M5.Lcd.setFont(&Font0);

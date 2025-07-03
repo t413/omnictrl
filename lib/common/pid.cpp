@@ -1,7 +1,7 @@
 #include "pid.h"
 #include <Arduino.h>
 
-PIDCtrl::PIDCtrl(float kp, float ki, float kd, float lim) : P(kp), I(ki), D(kd), limit(lim) {
+PIDCtrl::PIDCtrl(float kp, float ki, float kd, float lim, float rampLim) : P(kp), I(ki), D(kd), limit(lim), rampLimit(rampLim) {
     reset();
 }
 
@@ -25,6 +25,10 @@ float PIDCtrl::update(unsigned long now, float error, float integralError) {
     float Dout = D * tuneScale * (error - prevErr) / dt;
     float out = constrain(Pout + Iout + Dout, -limit, limit);
 
+    if (rampLimit > 0) {
+        float maxChange = rampLimit * dt;
+        out = constrain(out, prevOut - maxChange, prevOut + maxChange);
+    }
     prevErr = integralError;
     prevOut = out;
     prevInt = Iout;
