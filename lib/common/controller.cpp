@@ -362,6 +362,7 @@ void Controller::loop() {
         redrawLCD_ = true;
       lastLinkUp_ = isLinkUp(now);
     } // validCount
+    lastPitchFwd_ = pitchFwd; //save for next loop
     lastDrive = now;
     lastRefreshDrives = now; //keep drive refresh in sync with this task
   }
@@ -444,6 +445,9 @@ void Controller::drawLCD(const uint32_t now) {
   lcd_->setCursor(2, lcd_->getCursorY()); //indent-in 2px
 
   if (redrawLCD_ || (now - lastClear) > 5000) {
+    uint8_t rot = isBalancing_ || abs(lastPitchFwd_) < MAX_TILT? 0 : 2; //balancing? reverse!
+    if (rot != lcd_->getRotation())
+      lcd_->setRotation(rot); //set rotation to 2 if upright, 1 if tilted
     auto x = lcd_->getCursorX(), y = lcd_->getCursorY();
     lcd_->fillRect(x, y, lcd_->width() - x - 2, lcd_->height() - y - 2, pageBG);
     lastClear = now;

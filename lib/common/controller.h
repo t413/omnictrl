@@ -21,6 +21,7 @@ class Controller {
   int8_t lastState_ = -1;
   bool lastLinkUp_ = false;
   Madgwick imuFilt_;
+  float lastPitchFwd_ = 0.0;
   float gyroScale_ = 1.0;
   float gyroZ = 0;
   PIDCtrl yawCtrl_ = PIDCtrl(0.28, 0.08, 0.0, 10);
