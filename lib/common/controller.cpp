@@ -28,7 +28,7 @@ const uint8_t DRIVE_IDS[NUM_DRIVES] = {0};
 #error "unknown board"
 #endif
 
-#define MAX_TILT 20.0
+#define MAX_TILT 30.0
 constexpr uint32_t IMU_UPDATE_PERIOD = 20; //ms
 #define LOW_BATTERY_VOLTAGE 21.0
 
@@ -155,6 +155,11 @@ void Controller::handleRxPacket(const uint8_t* buf, uint8_t len) {
   }
 }
 
+float blend(float a, float b, float t) {
+  t = constrain(t, 0.0f, 1.0f);
+  return (1.0f - t) * a + t * b;
+}
+
 uint32_t lastDraw = 0;
 uint32_t lastDrive = 1000;
 uint32_t lastPollStats = 0;
@@ -167,13 +172,16 @@ void Controller::loop() {
 
   if ((now - lastPollStats) > 200) {
     for (int i = 0; i < NUM_DRIVES; i++) {
+      auto state = drives_[i]->getMotorState();
+      if (!enabled_ && state.mode != MotorMode::Disabled)
+        drives_[i]->setMode(MotorMode::Disabled); //should be disabled
       drives_[i]->fetchVBus();  // Also request VBUS parameter
       auto v = drives_[i]->getVBus();
       if (vbusFiltered_ < 0.1 && v > 0.1)
         vbusFiltered_ = v; // initialize filtered VBUS
       vbusFiltered_ = 0.9 * vbusFiltered_ + 0.1 * v; // simple low-pass filter
     }
-    if (vbusFiltered_ < (LOW_BATTERY_VOLTAGE - 0.2) && lastState_) {
+    if (vbusFiltered_ < (LOW_BATTERY_VOLTAGE - 0.2) && enabled_) {
       for (int i = 0; i < NUM_DRIVES; i++)
           drives_[i]->setMode(MotorMode::Disabled);
     }
@@ -228,13 +236,12 @@ void Controller::loop() {
     R[2][2] = 1 - 2 * (q[1] * q[1] + q[2] * q[2]);
 
     float pitchFwd = (atan2(-R[2][0], R[2][2]) + PI / 2) * 180.0 / PI;
-
-    bool isUpOnEnd = abs(pitchFwd) < (isBalancing_? MAX_TILT * 1.6 : MAX_TILT); //more tilt allowed when balancing
+    bool isUpOnEnd = abs(pitchFwd) < MAX_TILT; //more tilt allowed when balancing
+    bool newbalance = isBalancing_ || isUpOnEnd;
 
     //control inputs
     float fwd = 0, side = 0, yaw = 0, thr = 0;
-    bool arm = lastState_;
-    bool balanceChange = false;
+    bool arm = enabled_;
     // --- CRSF Rx --- //
 
     bool csrfArm = crsf_.isLinkUp()? crsf_.getChannel(5) > 1500 : false;
@@ -249,7 +256,7 @@ void Controller::loop() {
       bool balanceModeEnabled_ = crsf_.getChannel(6) > 1600;
       bool enableAdjustment = (yawCtrlEnabled_ || balanceModeEnabled_) && (crsf_.getChannel(8) > 1500);
       maxSpeed_ = mapfloat(crsf_.getChannel(7), 1000, 2000, 6, 30); //aux 2: speed selection
-      isUpOnEnd &= balanceModeEnabled_;
+      newbalance &= balanceModeEnabled_;
 
       fwd = mapfloat(crsf_.getChannel(2), 1000, 2000, -maxSpeed_, maxSpeed_);
       side = mapfloat(crsf_.getChannel(1), 1000, 2000, -maxSpeed_, maxSpeed_);
@@ -273,27 +280,33 @@ void Controller::loop() {
     } else { // no control input
       arm = false;
       yawCtrlEnabled_ = false;
-      isUpOnEnd = false;
+      newbalance = false;
     }
-    if (isBalancing_ != isUpOnEnd) {
-      isBalancing_ = isUpOnEnd;
-      if (canPrint()) Serial.printf("Balancing mode %s\n", isUpOnEnd? "enabled" : "disabled");
+    if (isBalancing_ && newbalance && !isUpOnEnd) {
+      if ((now - lastBalanceChange_) > 2000) //extra leeway when getting going
+        newbalance = false;
+      else if (abs(pitchFwd) > MAX_TILT * 1.2)
+        newbalance = false; //way too much tilt
+    }
+    if (isBalancing_ != newbalance) {
+      isBalancing_ = newbalance;
+      if (canPrint()) Serial.printf("Balancing mode %s\n", isBalancing_? "enabled" : "disabled");
       resetPids();
-      balanceChange = true;
+      lastBalanceChange_ = now;
     }
 
     //main control loop
     if (getValidDriveCount()) { //at least one
 
       //arm/disarm
-      if (arm != lastState_) {
+      if (arm != enabled_) {
         if (canPrint())
           Serial.printf("SETTING STATE %s\n", arm? "ARM" : "DISARM");
         for (int i = 0; i < NUM_DRIVES; i++) {
           drives_[i]->setMode(arm? MotorMode::Speed : MotorMode::Disabled);
         }
         resetPids();
-        lastState_ = arm? 1 : 0;
+        enabled_ = arm;
         redrawLCD_ = true;
       }
 
@@ -316,14 +329,22 @@ void Controller::loop() {
       fwdSpeed_ /= 2;
       yawSpeed_ /= 2;
 
-      if (balanceChange) {
+      if (lastBalanceChange_ == now) {
         for (int d = 0; d < NUM_DRIVES; d++)
           if (d != BACK) //back stays in speed mode
             drives_[d]->setMode(isBalancing_? MotorMode::Current : MotorMode::Speed);
       }
 
       if (isBalancing_) {
-        float pitchGoal = balanceSpeedCtrl_.update(now, fwdSpeed_ - fwd); //input is speed, setpoint is [user fwd]
+        // Blend between angle-control and odometry speed control
+        const uint32_t balanceChangeDuration = 2000; //ms
+        float pitchGoal = balanceSpeedCtrl_.update(now, fwdSpeed_ - fwd);
+        if ((now - lastBalanceChange_) < balanceChangeDuration) {
+          const float blendT = (now - lastBalanceChange_) / (float)balanceChangeDuration;
+          pitchGoal = blend( -fwd, pitchGoal, blendT);
+          if (blendT < 0.5f)
+            balanceSpeedCtrl_.reset(); //prevent rampup while not in control
+        }
         float torqueCmd = balanceCtrl_.update(now, pitchGoal - pitchFwd); //input is angle
         if (canPrint()) {
           Serial.printf("(fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> torque %06.2f\n",
@@ -430,7 +451,7 @@ void Controller::drawLCD(const uint32_t now) {
     bgRainbow = RED;
   }
   if (bgRainbow == RED) { fg = WHITE; pageBG = SUPERDARKRED; }
-  if (lastState_) { title = "running"; pageBG = SUPERDARKBLUE; }
+  if (enabled_) { title = "running"; pageBG = SUPERDARKBLUE; }
 
   //draw 2px line down left, right, and bottom of screen
   lcd_->fillRect(0, 0, 2, lcd_->height(), bgRainbow); //vertical left
@@ -445,7 +466,7 @@ void Controller::drawLCD(const uint32_t now) {
   lcd_->setCursor(2, lcd_->getCursorY()); //indent-in 2px
 
   if (redrawLCD_ || (now - lastClear) > 5000) {
-    uint8_t rot = isBalancing_ || abs(lastPitchFwd_) < MAX_TILT? 0 : 2; //balancing? reverse!
+    uint8_t rot = (isBalancing_ || (abs(lastPitchFwd_) < MAX_TILT))? 0 : 2; //balancing? reverse!
     if (rot != lcd_->getRotation())
       lcd_->setRotation(rot); //set rotation to 2 if upright, 1 if tilted
     auto x = lcd_->getCursorX(), y = lcd_->getCursorY();
@@ -492,23 +513,15 @@ void Controller::drawLCD(const uint32_t now) {
     String draw = tuneLabel + ":" + String(*adjustables_[selectedTune_], 2);
     drawCentered(draw.c_str(), lcd_, WHITE);
     M5.Lcd.setCursor(2, M5.Lcd.getCursorY()); //indent-in 2px
+  } else {
+    M5.Lcd.setFont(&FreeSansBold12pt7b);
+    M5.Lcd.setTextColor(CYAN, pageBG);
+    String pitchStr = "p" + String(lastPitchFwd_, 1);
+    drawCentered(pitchStr.c_str(), lcd_, pageBG);
   }
 
-  M5.Lcd.setFont(&FreeSansBold9pt7b);
-  M5.Lcd.setTextColor(WHITE, BLACK);
-  M5.Lcd.printf(" spd %d", (uint8_t)maxSpeed_);
-  if (yawCtrlEnabled_ || isBalancing_) {
-    M5.Lcd.setTextColor(fg, bgRainbow);
-    M5.Lcd.printf(" %s", yawCtrlEnabled_? "[yaw]" : "[bal]");
-  }
 
-  M5.Lcd.setFont(&FreeMono9pt7b);
-  M5.Lcd.setTextColor(WHITE, BLACK);
-  M5.Lcd.printf("p%0.1f", imuFilt_.getPitchDegree());
 
-  M5.Lcd.setFont(&FreeMono9pt7b);
-  M5.Lcd.setTextColor(YELLOW, BLACK);
-  M5.Lcd.printf("\nva%0.1f", fwdSpeed_);
 
   //bottom aligned
   M5.Lcd.setFont(&Font0);
@@ -538,6 +551,6 @@ void drawCentered(const char* text, lgfx::v1::LGFX_Device* lcd, uint16_t bg, uin
   lcd->fillRect(lr_padding, starty, lcd->getCursorX(), lcd->fontHeight(), bg);
   lcd->print(text);
   lcd->fillRect(lcd->getCursorX(), starty, lcd->width() - lcd->getCursorX() - lr_padding, lcd->fontHeight(), bg);
-  lcd->println();
+  lcd->setCursor(lr_padding, starty + titleheight); //indent-in 2px
 }
 

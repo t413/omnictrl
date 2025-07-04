@@ -18,7 +18,7 @@ class Controller {
 
   AlfredoCRSF crsf_;
   MotionControl lastMotionCmd_;
-  int8_t lastState_ = -1;
+  bool enabled_ = false;
   bool lastLinkUp_ = false;
   Madgwick imuFilt_;
   float lastPitchFwd_ = 0.0;
@@ -32,6 +32,7 @@ class Controller {
   float yawSpeed_ = 0.0;
   float maxSpeed_ = 0.0;
   float vbusFiltered_ = 0.0;
+  uint32_t lastBalanceChange_ = 0;
   bool yawCtrlEnabled_ = false;
   bool isBalancing_ = false;
   bool redrawLCD_ = false;
