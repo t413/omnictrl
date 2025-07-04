@@ -106,7 +106,7 @@ void Controller::setup() {
   M5.begin();
   //check if has lcd
   if (M5.Lcd.width() > 0) {
-    lcd_ = &M5.Lcd;
+    display_.setLCD(&M5.Lcd);
     M5.Lcd.setRotation(2); //flip
   }
   M5.Power.begin();
@@ -190,11 +190,16 @@ void Controller::loop() {
   uint32_t now = millis();
 
   if ((now - lastPollStats) > (lastLinkUp_? 200 : 500)) {
+    uint32_t latest = 0;
     for (int i = 0; i < NUM_DRIVES; i++) {
+      auto time = drives_[i]->getLastStatusTime();
+      latest = max(latest, time);
       auto state = drives_[i]->getMotorState();
       if (!enabled_ && state.mode != MotorMode::Disabled)
         drives_[i]->setMode(MotorMode::Disabled); //should be disabled
       drives_[i]->fetchVBus();  // Also request VBUS parameter
+      if ((now - time) > 200)
+        continue;
       auto v = drives_[i]->getVBus();
       if (telem_.vbus < 0.1 && v > 0.1)
         telem_.vbus = v; // initialize filtered VBUS
@@ -204,6 +209,7 @@ void Controller::loop() {
       for (int i = 0; i < NUM_DRIVES; i++)
           drives_[i]->setMode(MotorMode::Disabled);
     }
+    telem_.timestamp = latest;
 
     // Send telemetry to remote
     if (validMac(remoteMac_)) {
@@ -239,7 +245,7 @@ void Controller::loop() {
       telem_.adjusting = 0.0;
       telem_.adjustSrc[0] = '\0';
     }
-    redrawLCD_ = true;
+    display_.requestRedraw();
   }
   #endif
   float* tunable = selectedTune_ < NUM_ADJUSTABLES? adjustables_[selectedTune_] : NULL;
@@ -340,7 +346,7 @@ void Controller::loop() {
         }
         resetPids();
         enabled_ = arm;
-        redrawLCD_ = true;
+        display_.requestRedraw();
       }
 
       yawCtrl_.limit = maxSpeed_; //TODO filter this
@@ -413,7 +419,7 @@ void Controller::loop() {
       //now output the drive commands
 
       if (lastLinkUp_ != isLinkUp(now))
-        redrawLCD_ = true;
+        display_.requestRedraw();
       lastLinkUp_ = isLinkUp(now);
     } // validCount
     telem_.pitch = pitchFwd; //save for next loop
@@ -421,7 +427,12 @@ void Controller::loop() {
     lastRefreshDrives = now; //keep drive refresh in sync with this task
   }
 
-  if ((now - lastDraw) > 60 || redrawLCD_) {
+  if ((now - lastDraw) > 60 || display_.isRedrawRequired()) {
+    uint8_t rot = (isBalancing_ || (abs(telem_.pitch) < MAX_TILT)) ? 0 : 2;
+    if (display_.getLCD()->getRotation() != rot) {
+      display_.getLCD()->setRotation(rot);
+      display_.requestRedraw();
+    }
     drawLCD(now);
     lastDraw = now;
   }
@@ -454,136 +465,29 @@ bool Controller::updateIMU() {
   return true;
 }
 
-uint16_t rainbowColor(float v) {
-    float h = v * 6.0;
-    float x = 1.0 - fabs(fmod(h, 2.0) - 1.0);
-    return lgfx::color565(
-        (h < 1 ? 1 : h < 2 ? x : h < 4 ? 0 : h < 5 ? x : 1) * 255,
-        (h < 1 ? x : h < 3 ? 1 : h < 4 ? x : 0) * 255,
-        (h < 2 ? 0 : h < 3 ? x : h < 5 ? 1 : x) * 255
-    );
-}
-const uint16_t SUPERDARKRED = lgfx::color565(50, 0, 0);
-const uint16_t SUPERDARKBLUE = lgfx::color565(0, 0, 50);
-
 void Controller::drawLCD(const uint32_t now) {
-  lcd_->startWrite();
-  auto bgRainbow = rainbowColor((now >> 2) % 1000 / 1000.0);
+  display_.startFrame();
+  auto bgRainbow = display_.timeRainbow(now);
   auto fg = BLACK;
   auto pageBG = BLACK;
   auto validCount = getValidDriveCount();
-  auto link = isLinkUp(now);
-  String title = (link? "ready" : "NO LINK");
-  if (!link) bgRainbow = RED;
-  if (isBalancing_) title = "balancing!";
-  if (!validCount) {
-    title = "no drives!";
+  String title = isBalancing_? "woah." : enabled_? "wee!" : "howdy";
+  String err;
+  if (telem_.vbus > 0.1 && telem_.vbus < LOW_BATTERY_VOLTAGE) err = "low batt!";
+  else if (!validCount) err = "no drives!";
+  else if (!isLinkUp(now)) err = "NO LINK";
+  if (!err.isEmpty()) {
+    title = err;
+    fg = WHITE;
+    pageBG = SUPERDARKRED;
     bgRainbow = RED;
-  } else if (telem_.vbus < LOW_BATTERY_VOLTAGE) {
-    title = "low batt!";
-    bgRainbow = RED;
-  }
-  if (bgRainbow == RED) { fg = WHITE; pageBG = SUPERDARKRED; }
-  if (enabled_) { title = "running"; pageBG = SUPERDARKBLUE; }
-
-  //draw 2px line down left, right, and bottom of screen
-  lcd_->fillRect(0, 0, 2, lcd_->height(), bgRainbow); //vertical left
-  lcd_->fillRect(lcd_->width() - 2, 0, 2, lcd_->height(), bgRainbow); //vertical right
-  lcd_->fillRect(0, lcd_->height() - 2, lcd_->width(), 2, bgRainbow); //horizontal bottom
-
-  //show title
-  lcd_->setCursor(2, 0);
-  lcd_->setTextColor(fg, bgRainbow);
-  lcd_->setFont(&FreeSansBold12pt7b);
-  drawCentered(title.c_str(), lcd_, bgRainbow);
-  lcd_->setCursor(2, lcd_->getCursorY()); //indent-in 2px
-
-  if (redrawLCD_ || (now - lastClear) > 5000) {
-    uint8_t rot = (isBalancing_ || (abs(telem_.pitch) < MAX_TILT))? 0 : 2; //balancing? reverse!
-    if (rot != lcd_->getRotation())
-      lcd_->setRotation(rot); //set rotation to 2 if upright, 1 if tilted
-    auto x = lcd_->getCursorX(), y = lcd_->getCursorY();
-    lcd_->fillRect(x, y, lcd_->width() - x - 2, lcd_->height() - y - 2, pageBG);
-    lastClear = now;
-    redrawLCD_ = false;
   }
 
-  // if this has a battery, show that
-  auto power = M5.Power.getType();
-  if (power != M5.Power.pmic_unknown) {
-    lcd_->setTextColor(WHITE, BLACK);
-    lcd_->setFont(&FreeMono12pt7b);
-    lcd_->printf(" %0.1fV\n", M5.Power.getBatteryVoltage() / 1000.0);
-  } else if (selectedTune_ == NUM_ADJUSTABLES || telem_.vbus < LOW_BATTERY_VOLTAGE) {
-    lcd_->setFont(&FreeSansBold18pt7b);
-    lcd_->setTextColor(WHITE, pageBG);
-    String vbusStr = String(telem_.vbus, 1) + "V";
-    drawCentered(vbusStr.c_str(), lcd_, pageBG);
-  }
-
-  //next show odrive status
-#if 0
-  if (validCount) {
-    //show drive voltage
-    //TODO! can read 0X3007 vBus(mv) register for this if the driver will let us!
-    M5.Lcd.setTextColor(WHITE, BLACK);
-    M5.Lcd.setFont(&FreeSansBold18pt7b);
-    M5.Lcd.printf("%0.1fV", lastBusStatus_.Bus_Voltage);
-    M5.Lcd.setFont(&FreeSansBold9pt7b); //small
-    for (int i = 0; i < NUM_DRIVES; i++) {
-      M5.Lcd.setTextColor(WHITE, lastHeartbeatTimes_[i] > (now - 100)? DARKGREEN : RED);
-      M5.Lcd.printf("%d", i);
-    }
-    M5.Lcd.setFont(&FreeSansBold18pt7b);
-    M5.Lcd.printf("\n"); //newline with big font
-  }
-#endif
-
-  if (selectedTune_ < NUM_ADJUSTABLES) {
-    M5.Lcd.setTextColor(SUPERDARKBLUE, WHITE);
-    M5.Lcd.setFont(&FreeSansBold9pt7b);
-    auto tuneLabel = adjNames_[selectedTune_];
-    String draw = tuneLabel + ":" + String(*adjustables_[selectedTune_], 2);
-    drawCentered(draw.c_str(), lcd_, WHITE);
-    M5.Lcd.setCursor(2, M5.Lcd.getCursorY()); //indent-in 2px
-  } else {
-    M5.Lcd.setFont(&FreeSansBold12pt7b);
-    M5.Lcd.setTextColor(CYAN, pageBG);
-    String pitchStr = "p" + String(telem_.pitch, 1);
-    drawCentered(pitchStr.c_str(), lcd_, pageBG);
-  }
-
-
-
-
-  //bottom aligned
-  M5.Lcd.setFont(&Font0);
-  M5.Lcd.setCursor(1, M5.Lcd.height() - 9);
-  M5.Lcd.setTextColor(WHITE, BLACK);
-  M5.Lcd.printf(" %.2f ", 1 / 1000.0 * now);
-
-  for (int i = 0; i < NUM_DRIVES; i++) {
-    if (!drives_[i]->getLastFaults()) continue;
-    M5.Lcd.setTextColor(RED, BLACK);
-    M5.Lcd.printf("[o%d:e%x]", i, drives_[i]->getLastFaults());
-  }
-
-  M5.Lcd.endWrite();
+  display_.setFont(&FreeSansBold12pt7b);
+  display_.drawBorder(bgRainbow);
+  display_.drawTitle(title.c_str(), fg, bgRainbow);
+  display_.clearContent(pageBG, now);
+  display_.drawTelem(telem_, now, pageBG);
+  display_.drawVersion(version_, pageBG);
+  display_.endFrame();
 }
-
-void drawCentered(const char* text, lgfx::v1::LGFX_Device* lcd, uint16_t bg, uint16_t lr_padding) {
-  if (!lcd) return;
-  auto titlewidth = lcd->textWidth(text);
-  auto titleheight = lcd->fontHeight();
-  auto starty = lcd->getCursorY();
-  if (titlewidth > lcd->width() - 4) {
-    lcd->setFont(&FreeMono9pt7b); //smaller
-    titlewidth = lcd->textWidth(text);
-  }
-  lcd->setCursor((lcd->width() - titlewidth) / 2, starty); //center title
-  lcd->fillRect(lr_padding, starty, lcd->getCursorX(), lcd->fontHeight(), bg);
-  lcd->print(text);
-  lcd->fillRect(lcd->getCursorX(), starty, lcd->width() - lcd->getCursorX() - lr_padding, lcd->fontHeight(), bg);
-  lcd->setCursor(lr_padding, starty + titleheight); //indent-in 2px
-}
-

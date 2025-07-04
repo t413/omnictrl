@@ -64,7 +64,7 @@ void RCRemote::setup() {
   M5.begin();
   //check if has lcd
   if (M5.Lcd.width() > 0) {
-    lcd_ = &M5.Lcd;
+    display_.setLCD(&M5.Lcd);
   }
   M5.Power.begin();
   if (M5.Imu.isEnabled()) {
@@ -90,7 +90,7 @@ void RCRemote::handleRxPacket(const uint8_t* buf, uint8_t len) {
     Serial.println("}");
   }
   auto cmd = len >= 1? (Cmds) buf[0] : Cmds::None;
-  if (cmd == Cmds::Telemetry && len == (1 + sizeof(Telemetry))) {
+  if (cmd == Cmds::Telemetry && len == (1 + sizeof(Telem))) {
     lastTelemetry_ = *((const Telem*) (buf + 1));
     lastTelemetry_.timestamp = millis();
   }
@@ -127,7 +127,7 @@ void RCRemote::loop() {
   if (M5.BtnA.wasPressed()) {
     lastWasMoved_ = now;
     setArmState(!armed_);
-    redrawLCD_ = true;
+    display_.requestRedraw();
   }
   if (M5.BtnB.wasPressed()) {
     lastWasMoved_ = now;
@@ -184,7 +184,7 @@ void RCRemote::loop() {
   }
 
   uint32_t sinceMoved = now - lastWasMoved_;
-  if ((now - lastDraw_) > 60 || redrawLCD_) {
+  if ((now - lastDraw_) > 60 || display_.isRedrawRequired()) {
     if (powerSaveMode_ && sinceMoved < 10000) {
       powerSaveMode_ = false;
       M5.Lcd.setBrightness(200); //turn on LCD
@@ -214,13 +214,12 @@ bool RCRemote::updateIMU() {
   return true;
 }
 
-uint16_t rainbowColor(float v);
-const uint16_t SUPERDARKRED = lgfx::color565(50, 0, 0);
-const uint16_t SUPERDARKBLUE = lgfx::color565(0, 0, 50);
-
 void RCRemote::drawLCD(const uint32_t now) {
-  lcd_->startWrite();
-  auto bgRainbow = rainbowColor((now >> 2) % 1000 / 1000.0);
+  auto lcd = display_.getLCD();
+  if (!lcd) return;
+
+  display_.startFrame();
+  auto bgRainbow = display_.timeRainbow(now);
   auto fg = BLACK;
   auto pageBG = BLACK;
 
@@ -231,70 +230,36 @@ void RCRemote::drawLCD(const uint32_t now) {
     bgRainbow = SUPERDARKRED;
   }
 
-  //draw 2px line down left, right, and bottom of screen
-  uint16_t borderW = 2;
-  lcd_->fillRect(0, 0, borderW, lcd_->height(), bgRainbow); //vertical left
-  lcd_->fillRect(lcd_->width() - borderW, 0, borderW, lcd_->height(), bgRainbow); //vertical right
-  lcd_->fillRect(0, lcd_->height() - borderW, lcd_->width(), borderW, bgRainbow); //horizontal bottom
-
-  //show title
-  lcd_->setCursor(borderW, 0);
-  lcd_->setTextColor(fg, bgRainbow);
-  lcd_->setFont(&FreeSansBold18pt7b);
-  drawCentered(title.c_str(), lcd_, bgRainbow, borderW);
-  lcd_->setCursor(borderW, lcd_->getCursorY()); //indent-in 2px
-
-  if (redrawLCD_ || (now - lastClear_) > 5000) {
-    auto x = lcd_->getCursorX(), y = lcd_->getCursorY();
-    lcd_->fillRect(x, y, lcd_->width() - x - borderW, lcd_->height() - y - borderW, pageBG);
-    lastClear_ = now;
-    redrawLCD_ = false;
-  }
+  display_.drawBorder(bgRainbow);
+  display_.drawTitle(title, fg, bgRainbow);
+  display_.clearContent(pageBG, now);
 
   //draw lastMotion_
-  lcd_->setTextColor(bgRainbow, pageBG);
-  lcd_->setFont(&FreeMono12pt7b);
-  drawCentered(("f" + String(lastMotion_.fwd  )).c_str(), lcd_, pageBG, borderW);
-  drawCentered(("y" + String(lastMotion_.yaw  )).c_str(), lcd_, pageBG, borderW);
-  // lcd_->setFont(&FreeMono9pt7b);
-  // drawCentered(("p" + String(lastMotion_.pitch)).c_str(), lcd_, pageBG, borderW);
-  // drawCentered(("r" + String(lastMotion_.roll )).c_str(), lcd_, pageBG, borderW);
+  lcd->setTextColor(bgRainbow, pageBG);
+  lcd->setFont(&FreeMono12pt7b);
+  display_.drawCentered(("f" + String(lastMotion_.fwd  )).c_str(), pageBG);
+  display_.drawCentered(("y" + String(lastMotion_.yaw  )).c_str(), pageBG);
 
+  // Draw telemetry using the common function
   if ((now - lastTelemetry_.timestamp) < 1000) {
-    lcd_->setFont(&FreeSans18pt7b);
-    lcd_->setTextColor(WHITE, pageBG);
-    String vbusStr = String(lastTelemetry_.vbus, 1) + "V";
-    drawCentered(vbusStr.c_str(), lcd_, pageBG, borderW);
-    if (lastTelemetry_.adjusting > 0.1) {
-      M5.Lcd.setTextColor(SUPERDARKBLUE, WHITE);
-      M5.Lcd.setFont(&FreeSansBold9pt7b);
-      String draw = lastTelemetry_.adjustSrc + ":" + String(lastTelemetry_.adjusting, 2);
-      drawCentered(draw.c_str(), lcd_, WHITE, borderW);
-    }
+    display_.drawTelem(lastTelemetry_, now, pageBG);
   } else {
-    // Show "no vbus" if no telemetry
-    lcd_->setFont(&FreeSans18pt7b);
-    lcd_->setTextColor(RED, pageBG);
-    drawCentered("no telem", lcd_, pageBG, borderW);
+    // Show "no telemetry" if no recent data
+    lcd->setFont(&FreeSans18pt7b);
+    lcd->setTextColor(RED, pageBG);
+    display_.drawCentered("no telem", pageBG);
   }
 
-  //bottom aligned
-  M5.Lcd.setFont(&Font0);
-  M5.Lcd.setCursor(borderW, M5.Lcd.height() - borderW - M5.Lcd.fontHeight());
-  auto bttmY = M5.Lcd.getCursorY();
-  M5.Lcd.setTextColor(WHITE, BLACK);
-  drawCentered(version_.c_str(), lcd_, pageBG, borderW);
+  display_.drawVersion(version_, pageBG);
 
-  // if this has a battery, show that next up from the bottom
-  auto power = M5.Power.getType();
-  if (power != M5.Power.pmic_unknown) {
-    lcd_->setTextColor(WHITE, pageBG);
-    lcd_->setFont(&FreeMono12pt7b);
-    lcd_->setCursor(borderW, bttmY - lcd_->fontHeight());
+  if (M5.Power.getType() != M5.Power.pmic_unknown) { //internal battery
+    lcd->setTextColor(WHITE, pageBG);
+    lcd->setFont(&FreeMono12pt7b);
+    lcd->setCursor(0, lcd->height() - 2 * lcd->fontHeight());
     String pwr = String(M5.Power.getBatteryVoltage() / 1000.0) + "V";
-    drawCentered(pwr.c_str(), lcd_, pageBG, borderW);
+    display_.drawCentered(pwr.c_str(), pageBG);
   }
 
-  M5.Lcd.endWrite();
+  display_.endFrame();
 }
 

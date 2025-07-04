@@ -2,6 +2,7 @@
 
 #include "pid.h"
 #include "rfprotocol.h"
+#include "displayhandler.h"
 #include <WString.h>
 #include <AlfredoCRSF.h>
 #include <MadgwickAHRS.h>
@@ -35,8 +36,7 @@ class Controller {
   uint32_t lastBalanceChange_ = 0;
   bool yawCtrlEnabled_ = false;
   bool isBalancing_ = false;
-  bool redrawLCD_ = false;
-  lgfx::v1::LGFX_Device* lcd_ = nullptr;
+  DisplayHandler display_;
 
   static const uint8_t NUM_ADJUSTABLES = 12;
   float* adjustables_[NUM_ADJUSTABLES] = {
@@ -69,5 +69,3 @@ public:
   bool updateIMU();
   const String version_;
 };
-
-void drawCentered(const char* text, lgfx::v1::LGFX_Device*, uint16_t bg, uint16_t lr_padding = 2);

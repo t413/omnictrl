@@ -1,6 +1,7 @@
 #pragma once
 
 #include <rfprotocol.h>
+#include <displayhandler.h>
 #include <WString.h>
 #include <MadgwickAHRS.h>
 #include <m5_unit_joystick2.hpp>
@@ -12,18 +13,16 @@ class RCRemote {
   esp_now_peer_info_t peerInfo_;
   M5UnitJoystick2 joy_;
   Madgwick imuFilt_;
-  lgfx::v1::LGFX_Device* lcd_ = nullptr;
+  DisplayHandler display_;
   bool armed_ = false;
   uint32_t lastWasMoved_ = 0;
   bool powerSaveMode_ = false;
   bool lastBtn_ = false;
   bool pitchRollOutEn_ = false;
-  bool redrawLCD_ = false;
   uint32_t lastPoll_ = 0;
   uint32_t lastDraw_ = 0;
-  uint32_t lastClear_ = 0;
   MotionControl lastMotion_;
-  Telemetry lastTelemetry_;
+  Telem lastTelemetry_;
   bool lastSentFail_ = false;
 
 public:
@@ -39,5 +38,3 @@ public:
   bool updateIMU();
   const String version_;
 };
-
-void drawCentered(const char* text, lgfx::v1::LGFX_Device*, uint16_t bg, uint16_t lr_padding = 2);
