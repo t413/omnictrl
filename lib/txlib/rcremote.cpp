@@ -90,6 +90,10 @@ void RCRemote::handleRxPacket(const uint8_t* buf, uint8_t len) {
     Serial.println("}");
   }
   auto cmd = len >= 1? (Cmds) buf[0] : Cmds::None;
+  if (cmd == Cmds::Telemetry && len == (1 + sizeof(Telemetry))) {
+    lastTelemetry_ = *((const Telem*) (buf + 1));
+    lastTelemetry_.timestamp = millis();
+  }
 }
 
 void RCRemote::setArmState(bool arm) {
@@ -252,8 +256,27 @@ void RCRemote::drawLCD(const uint32_t now) {
   lcd_->setFont(&FreeMono12pt7b);
   drawCentered(("f" + String(lastMotion_.fwd  )).c_str(), lcd_, pageBG, borderW);
   drawCentered(("y" + String(lastMotion_.yaw  )).c_str(), lcd_, pageBG, borderW);
-  drawCentered(("p" + String(lastMotion_.pitch)).c_str(), lcd_, pageBG, borderW);
-  drawCentered(("r" + String(lastMotion_.roll )).c_str(), lcd_, pageBG, borderW);
+  // lcd_->setFont(&FreeMono9pt7b);
+  // drawCentered(("p" + String(lastMotion_.pitch)).c_str(), lcd_, pageBG, borderW);
+  // drawCentered(("r" + String(lastMotion_.roll )).c_str(), lcd_, pageBG, borderW);
+
+  if ((now - lastTelemetry_.timestamp) < 1000) {
+    lcd_->setFont(&FreeSans18pt7b);
+    lcd_->setTextColor(WHITE, pageBG);
+    String vbusStr = String(lastTelemetry_.vbus, 1) + "V";
+    drawCentered(vbusStr.c_str(), lcd_, pageBG, borderW);
+    if (lastTelemetry_.adjusting > 0.1) {
+      M5.Lcd.setTextColor(SUPERDARKBLUE, WHITE);
+      M5.Lcd.setFont(&FreeSansBold9pt7b);
+      String draw = lastTelemetry_.adjustSrc + ":" + String(lastTelemetry_.adjusting, 2);
+      drawCentered(draw.c_str(), lcd_, WHITE, borderW);
+    }
+  } else {
+    // Show "no vbus" if no telemetry
+    lcd_->setFont(&FreeSans18pt7b);
+    lcd_->setTextColor(RED, pageBG);
+    drawCentered("no telem", lcd_, pageBG, borderW);
+  }
 
   //bottom aligned
   M5.Lcd.setFont(&Font0);

@@ -23,6 +23,7 @@ class RCRemote {
   uint32_t lastDraw_ = 0;
   uint32_t lastClear_ = 0;
   MotionControl lastMotion_;
+  Telemetry lastTelemetry_;
   bool lastSentFail_ = false;
 
 public:

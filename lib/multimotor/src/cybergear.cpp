@@ -141,7 +141,6 @@ bool CyberGearDriver::handleIncoming(uint32_t id, uint8_t* data, uint8_t len, ui
         enabled_ = (updated.mode != MotorMode::Disabled);
         lastStatusTime_ = now;
         if (Serial && Serial.availableForWrite())
-            Serial.print(".");
         return true;
     } else if (msgtype == CmdFault) { //fault message (decimal 21)
         if (Serial && Serial.availableForWrite()) {

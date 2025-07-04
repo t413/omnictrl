@@ -43,6 +43,11 @@ bool canPrint() {
 
 CanEsp32Twai twaiInterface_;
 
+bool validMac(const uint8_t* mac) {
+  for (int i = 0; i < 6; i++)
+    if (mac[i] != 0) return true;
+  return false;
+}
 
 // -------------------- //
 // ---- Controller ---- //
@@ -94,7 +99,7 @@ void Controller::setup() {
     Serial.printf("ESP-NOW init failed: %d\n", res);
   esp_now_register_recv_cb([](const uint8_t *mac, const uint8_t *data, int len) {
     if (controller_)
-      controller_->handleRxPacket(data, len);
+      controller_->handleRxPacket(mac, data, len);
   });
 
 #ifdef IS_M5
@@ -138,7 +143,7 @@ void Controller::resetPids() {
   balanceYawCtrl_.reset();
 }
 
-void Controller::handleRxPacket(const uint8_t* buf, uint8_t len) {
+void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len) {
   if (canPrint()) {
     Serial.printf("RX(%d): [", len);
     for (int i = 0; i < len; i++)
@@ -152,6 +157,20 @@ void Controller::handleRxPacket(const uint8_t* buf, uint8_t len) {
     if (canPrint())
       Serial.printf("MC: a%d fwd %06.2f yaw %06.2f pitch %06.2f roll %06.2f\n", rxmc.state, rxmc.fwd, rxmc.yaw, rxmc.pitch, rxmc.roll);
     lastMotionCmd_ = rxmc;
+
+    if (memcmp(mac, remoteMac_, 6) != 0) {
+      if (canPrint())
+        Serial.printf("New telemetry target: %02x:%02x:%02x:%02x:%02x:%02x\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+      memcpy(remoteMac_, mac, 6);
+      // Register peer
+      esp_now_peer_info_t newpeer = {0};
+      memcpy(newpeer.peer_addr, remoteMac_, 6);
+      newpeer.channel = 0;
+      newpeer.encrypt = false;
+      auto res = esp_now_add_peer(&newpeer);
+      if (res != ESP_OK && canPrint())
+        Serial.printf("ESP-NOW add peer failed: %d\n", res);
+    }
   }
 }
 
@@ -170,28 +189,37 @@ uint32_t lastClear = 0;
 void Controller::loop() {
   uint32_t now = millis();
 
-  if ((now - lastPollStats) > 200) {
+  if ((now - lastPollStats) > (lastLinkUp_? 200 : 500)) {
     for (int i = 0; i < NUM_DRIVES; i++) {
       auto state = drives_[i]->getMotorState();
       if (!enabled_ && state.mode != MotorMode::Disabled)
         drives_[i]->setMode(MotorMode::Disabled); //should be disabled
       drives_[i]->fetchVBus();  // Also request VBUS parameter
       auto v = drives_[i]->getVBus();
-      if (vbusFiltered_ < 0.1 && v > 0.1)
-        vbusFiltered_ = v; // initialize filtered VBUS
-      vbusFiltered_ = 0.9 * vbusFiltered_ + 0.1 * v; // simple low-pass filter
+      if (telem_.vbus < 0.1 && v > 0.1)
+        telem_.vbus = v; // initialize filtered VBUS
+      telem_.vbus = 0.9 * telem_.vbus + 0.1 * v; // simple low-pass filter
     }
-    if (vbusFiltered_ < (LOW_BATTERY_VOLTAGE - 0.2) && enabled_) {
+    if (telem_.vbus < (LOW_BATTERY_VOLTAGE - 0.2) && enabled_) {
       for (int i = 0; i < NUM_DRIVES; i++)
           drives_[i]->setMode(MotorMode::Disabled);
     }
+
+    // Send telemetry to remote
+    if (validMac(remoteMac_)) {
+      uint8_t data[1 + sizeof(Telem)] = {0};
+      data[0] = (uint8_t) Cmds::Telemetry;
+      memcpy(data + 1, &telem_, sizeof(Telem));
+      esp_now_send(remoteMac_, data, sizeof(data));
+    }
+
     lastPollStats = now;
-    if (canPrint() && !isLinkUp(now))
+    if (canPrint() && !lastLinkUp_)
       Serial.println("MAC: " + WiFi.macAddress());
   }
   if (((now - lastTxStats) > 100) && crsf_.isLinkUp()) {
     crsf_sensor_battery_t crsfBatt = {
-      .voltage = htobe16((uint16_t)(vbusFiltered_ * 10.0)),
+      .voltage = htobe16((uint16_t)(telem_.vbus * 10.0)),
       .current = htobe16((uint16_t)(0 * 10.0)),
       .capacity = htobe16((uint16_t)(0)) << 8,
       .remaining = (uint8_t)(0),
@@ -204,6 +232,13 @@ void Controller::loop() {
   M5.update(); //updates buttons, etc
   if (M5.BtnA.wasPressed()) {
     selectedTune_ = (selectedTune_ + 1) % (NUM_ADJUSTABLES + 1); //+1 for disabled
+    if (selectedTune_ < NUM_ADJUSTABLES) {
+      telem_.adjusting = *adjustables_[selectedTune_];
+      strncpy(telem_.adjustSrc, adjNames_[selectedTune_].c_str(), sizeof(telem_.adjustSrc) - 1);
+    } else {
+      telem_.adjusting = 0.0;
+      telem_.adjustSrc[0] = '\0';
+    }
     redrawLCD_ = true;
   }
   #endif
@@ -213,13 +248,11 @@ void Controller::loop() {
     for (int i = 0; i < NUM_DRIVES; i++) {
       drives_[i]->requestStatus();
     }
-    Serial.print("-");
     lastRefreshDrives = now; //also updated below, to keep in sync with IMU updates
   }
 
   if ((now - lastDrive) > IMU_UPDATE_PERIOD) {
     updateIMU();
-    Serial.print("*");
 
     float q[4] = {0};
     imuFilt_.getQuaternion(q);
@@ -383,7 +416,7 @@ void Controller::loop() {
         redrawLCD_ = true;
       lastLinkUp_ = isLinkUp(now);
     } // validCount
-    lastPitchFwd_ = pitchFwd; //save for next loop
+    telem_.pitch = pitchFwd; //save for next loop
     lastDrive = now;
     lastRefreshDrives = now; //keep drive refresh in sync with this task
   }
@@ -446,7 +479,7 @@ void Controller::drawLCD(const uint32_t now) {
   if (!validCount) {
     title = "no drives!";
     bgRainbow = RED;
-  } else if (vbusFiltered_ < LOW_BATTERY_VOLTAGE) {
+  } else if (telem_.vbus < LOW_BATTERY_VOLTAGE) {
     title = "low batt!";
     bgRainbow = RED;
   }
@@ -466,7 +499,7 @@ void Controller::drawLCD(const uint32_t now) {
   lcd_->setCursor(2, lcd_->getCursorY()); //indent-in 2px
 
   if (redrawLCD_ || (now - lastClear) > 5000) {
-    uint8_t rot = (isBalancing_ || (abs(lastPitchFwd_) < MAX_TILT))? 0 : 2; //balancing? reverse!
+    uint8_t rot = (isBalancing_ || (abs(telem_.pitch) < MAX_TILT))? 0 : 2; //balancing? reverse!
     if (rot != lcd_->getRotation())
       lcd_->setRotation(rot); //set rotation to 2 if upright, 1 if tilted
     auto x = lcd_->getCursorX(), y = lcd_->getCursorY();
@@ -481,10 +514,10 @@ void Controller::drawLCD(const uint32_t now) {
     lcd_->setTextColor(WHITE, BLACK);
     lcd_->setFont(&FreeMono12pt7b);
     lcd_->printf(" %0.1fV\n", M5.Power.getBatteryVoltage() / 1000.0);
-  } else if (selectedTune_ == NUM_ADJUSTABLES || vbusFiltered_ < LOW_BATTERY_VOLTAGE) {
+  } else if (selectedTune_ == NUM_ADJUSTABLES || telem_.vbus < LOW_BATTERY_VOLTAGE) {
     lcd_->setFont(&FreeSansBold18pt7b);
     lcd_->setTextColor(WHITE, pageBG);
-    String vbusStr = String(vbusFiltered_, 1) + "V";
+    String vbusStr = String(telem_.vbus, 1) + "V";
     drawCentered(vbusStr.c_str(), lcd_, pageBG);
   }
 
@@ -516,7 +549,7 @@ void Controller::drawLCD(const uint32_t now) {
   } else {
     M5.Lcd.setFont(&FreeSansBold12pt7b);
     M5.Lcd.setTextColor(CYAN, pageBG);
-    String pitchStr = "p" + String(lastPitchFwd_, 1);
+    String pitchStr = "p" + String(telem_.pitch, 1);
     drawCentered(pitchStr.c_str(), lcd_, pageBG);
   }
 
