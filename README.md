@@ -1,14 +1,30 @@
 # OmniCtrl: The coolest robot controller 🕹
 
+[![Top Language](https://img.shields.io/github/languages/top/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl)
+[![Lines of Code](https://tokei.rs/b1/github/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/graphs/code-frequency)
+[![GitHub Repo stars](https://img.shields.io/github/stars/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/stargazers)
+[![GitHub forks](https://img.shields.io/github/forks/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/network/members)
+[![GitHub issues](https://img.shields.io/github/issues/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/issues)
+[![Last commit](https://img.shields.io/github/last-commit/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/commits/main)
+[![Users Total](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscord.com%2Fapi%2Finvites%2FDqJNftD7Hw%3Fwith_counts%3Dtrue&query=%24.approximate_member_count&logo=discord&logoColor=white&label=Users&color=5865F2&style=flat-square)](https://3d.t413.com/go/discord?ref=gh-omni)
+[![Users Online](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscord.com%2Fapi%2Finvites%2FDqJNftD7Hw%3Fwith_counts%3Dtrue&query=%24.approximate_presence_count&label=Online&color=5865F2&style=flat-square)](https://3d.t413.com/go/discord?ref=gh-omni)
+[![Eyes: Googly](https://img.shields.io/badge/Eyes-Googly-yellow?style=flat-square)](#)
+
+
 The controller for Doug, the omni-wheeled robot!
 
-[![rover gif](https://github.com/user-attachments/assets/3abf20fa-31b0-4424-8c4f-44cd74c5599f)](https://makerworld.com/en/models/719381)
+[![rover gif](https://github.com/user-attachments/assets/3abf20fa-31b0-4424-8c4f-44cd74c5599f)](https://t413.com/go/dug-mw?ref=gh)
 
 _GIF of the robot in action!_
 
-See my [MakerWorld design](https://makerworld.com/en/models/719381) for more details!
+See my [MakerWorld design](https://t413.com/go/dug-mw?ref=gh) for more details!
 
-_Join my [3d desin discord](https://3d.t413.com/go/discord?gh.omni) and say hi and talk shop!_
+
+
+_Join my [3D Design Discord](https://3d.t413.com/go/discord?ref=gh-omni) and say hi and talk shop!_
+
+[![Users Total](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscord.com%2Fapi%2Finvites%2FDqJNftD7Hw%3Fwith_counts%3Dtrue&query=%24.approximate_member_count&logo=discord&logoColor=white&label=Users&color=5865F2&style=flat-square)](https://3d.t413.com/go/discord?ref=gh-omni)
+[![Users Online](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscord.com%2Fapi%2Finvites%2FDqJNftD7Hw%3Fwith_counts%3Dtrue&query=%24.approximate_presence_count&label=Online&color=5865F2&style=flat-square)](https://3d.t413.com/go/discord?ref=gh-omni)
 
 
 ## Features:
