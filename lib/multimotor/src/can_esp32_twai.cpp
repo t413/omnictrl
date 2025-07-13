@@ -4,14 +4,27 @@
 #include <Arduino.h>
 #include <driver/twai.h>
 
-void CanEsp32Twai::setup(uint8_t rx, uint8_t tx, Stream* debug) {
+void CanEsp32Twai::setup(uint8_t rx, uint8_t tx, int baudrate, Stream* debug) {
     twai_status_info_t twai_status;
     twai_get_status_info(&twai_status);
     if (twai_status.state == TWAI_STATE_RUNNING)
         return;
 
     twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT((gpio_num_t)tx, (gpio_num_t)rx, TWAI_MODE_NORMAL);
-    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();  //Look in the api-reference for other speed sets.
+    twai_timing_config_t t_config = TWAI_TIMING_CONFIG_1MBITS();
+    switch (baudrate) {
+        case 1000000: t_config = TWAI_TIMING_CONFIG_1MBITS(); break;
+        case 500000:  t_config = TWAI_TIMING_CONFIG_500KBITS(); break;
+        case 250000:  t_config = TWAI_TIMING_CONFIG_250KBITS(); break;
+        case 125000:  t_config = TWAI_TIMING_CONFIG_125KBITS(); break;
+        case 100000:  t_config = TWAI_TIMING_CONFIG_100KBITS(); break;
+        case 50000:   t_config = TWAI_TIMING_CONFIG_50KBITS(); break;
+        case 20000:   t_config = TWAI_TIMING_CONFIG_20KBITS(); break;
+        default:
+            t_config = TWAI_TIMING_CONFIG_1MBITS();
+            if (debug) debug->println("Unknown baudrate, defaulting to 1M");
+    }
+
     twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
 
     if (twai_driver_install(&g_config, &t_config, &f_config) != ESP_OK) {
@@ -28,10 +41,9 @@ void CanEsp32Twai::setup(uint8_t rx, uint8_t tx, Stream* debug) {
         return;
     }
 }
-
-void CanEsp32Twai::send(uint32_t id, uint8_t* data, uint8_t len, bool ss, bool rtr) {
+void CanEsp32Twai::send(uint32_t id, uint8_t* data, uint8_t len, bool extended, bool ss, bool rtr) {
     twai_message_t message = {0};
-    message.extd = 1; //enable extended frame format
+    message.extd = extended? 1 : 0; //enable extended frame format
     message.ss = ss; //enable single shot transmission
     message.rtr = rtr; //enable remote transmission request
     message.identifier = id;

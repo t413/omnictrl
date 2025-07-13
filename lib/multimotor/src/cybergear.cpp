@@ -75,17 +75,17 @@ uint32_t mkID(uint8_t cmd, uint8_t opthi, uint8_t optlo, uint8_t id) {
 
 void CyberGearDriver::requestStatus() {
     uint8_t data[8] = {0x00}; //TODO can this 0 bytes?
-    if (can_) can_->send(mkID(CmdFault, 0, 0, id_), data, 8);
+    if (can_) can_->send(mkID(CmdFault, 0, 0, id_), data, 8, true);
 }
 
 void CyberGearDriver::setCyberMode(uint8_t mode) {
     uint8_t data[8] = { AddrRunMode & 0x00FF, AddrRunMode >> 8, 0x00, 0x00, (uint8_t) mode, 0x00, 0x00, 0x00};
-    if (can_) can_->send(mkID(CmdWriteParamUpper, 0, 0, id_), data, 8);
+    if (can_) can_->send(mkID(CmdWriteParamUpper, 0, 0, id_), data, 8, true, false); //no single shot, will retry
 }
 
 void CyberGearDriver::setEnable(bool enable) {
     uint8_t data[8] = {0x00};
-    if (can_) can_->send(mkID(enable? CmdEnable : CmdStop, 0, 0, id_), data, 8);
+    if (can_) can_->send(mkID(enable? CmdEnable : CmdStop, 0, 0, id_), data, 8, true, false); //no single shot, will retry);
 }
 
 void CyberGearDriver::setMode(MotorMode mode) {
@@ -109,12 +109,12 @@ void CyberGearDriver::setSetpoint(MotorMode mode, float value) {
     }
     uint8_t data[8] = { addr & 0x00FF, addr >> 8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
     memcpy(&data[4], &value, 4);
-    if (can_) can_->send(mkID(CmdWriteParamUpper, 0, 0, id_), data, 8);
+    if (can_) can_->send(mkID(CmdWriteParamUpper, 0, 0, id_), data, 8, true);
 }
 
 void CyberGearDriver::fetchVBus() {
     uint8_t data[8] = { AddrVBUSfloat & 0x00FF, AddrVBUSfloat >> 8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-    if (can_) can_->send(mkID(CmdReadParamLower, 0, 0, id_), data, 8);
+    if (can_) can_->send(mkID(CmdReadParamLower, 0, 0, id_), data, 8, true);
 }
 
 bool CyberGearDriver::handleIncoming(uint32_t id, uint8_t* data, uint8_t len, uint32_t now) {

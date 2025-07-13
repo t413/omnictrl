@@ -40,7 +40,7 @@ uint16_t mkID(uint8_t id, CmdIDs cmd) {
 }
 
 void ODriveDriver::send(CmdIDs cmd, uint8_t* data, uint8_t len, bool ss, bool rtr) {
-    if (can_) can_->send(mkID(id_, (CmdIDs) cmd), data, len);
+    if (can_) can_->send(mkID(id_, (CmdIDs) cmd), data, len, false, ss, rtr);
 }
 
 void ODriveDriver::requestStatus() {

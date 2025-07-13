@@ -4,6 +4,6 @@
 
 class CanInterface {
 public:
-    virtual void send(uint32_t id, uint8_t* data, uint8_t len, bool ss = true, bool rtr = false) = 0;
+    virtual void send(uint32_t id, uint8_t* data, uint8_t len, bool extended, bool ss = true, bool rtr = false) = 0;
 };
 
