@@ -6,6 +6,7 @@ enum class MotorMode {
     Current = 1,
     Speed = 2,
     Position = 3,
+    Unknown = 4,
 };
 
 struct MotorState {

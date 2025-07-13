@@ -36,15 +36,11 @@ enum class CmdIDs : uint8_t {
 ODriveDriver::ODriveDriver(uint8_t id, CanInterface* can) : id_(id), can_(can) { }
 
 uint16_t mkID(uint8_t id, CmdIDs cmd) {
-    return (id << 4) | (uint16_t) cmd;
+    return (id << 5) | (uint16_t) cmd;
 }
 
 void ODriveDriver::send(CmdIDs cmd, uint8_t* data, uint8_t len, bool ss, bool rtr) {
     if (can_) can_->send(mkID(id_, (CmdIDs) cmd), data, len, false, ss, rtr);
-}
-
-void ODriveDriver::requestStatus() {
-    //no need, those are sent automatically
 }
 
 //get different combinations of payload
@@ -55,23 +51,33 @@ union Payload {
     float    floats[2];
 };
 
+void ODriveDriver::requestStatus() {
+    send(CmdIDs::GetEncoderEstimates, NULL, 0, true, true); //single shot, request-to-receive
+}
+
+void ODriveDriver::fetchVBus() {
+    send(CmdIDs::GetBusVoltageCurrent, NULL, 0, true, true);
+}
+
 void ODriveDriver::setOdriveMode(OdriveCtrlMode mode) {
     Payload p;
     p.dwords[0] = (uint32_t) mode;
     p.dwords[1] = 1; //passtrough input mode
-    send(CmdIDs::SetControllerMode, p.bytes);
+    send(CmdIDs::SetControllerMode, p.bytes, 8, false); //no single shot (enables retries)
 }
 
 void ODriveDriver::setOdriveEnable(bool enable) {
     Payload p;
-    p.dwords[0] = enable ? 8 : 0; //Closed loop control
+    p.dwords[0] = enable ? 8 : 1; //Closed loop control
     send(CmdIDs::SetAxisState, p.bytes, 8, false); //no single shot (enables retries)
 }
 
 void ODriveDriver::setMode(MotorMode mode) {
     if (mode == MotorMode::Disabled) {
         setOdriveEnable(false); //disable before setting mode
+        lastSentMode_ = MotorMode::Disabled;
     } else {
+        lastSentMode_ = mode;
         OdriveCtrlMode odriveMode = (mode == MotorMode::Speed) ? OdriveCtrlMode::Velocity :
                        (mode == MotorMode::Current) ? OdriveCtrlMode::Torque :
                        OdriveCtrlMode::Position;
@@ -95,8 +101,8 @@ bool ODriveDriver::handleIncoming(uint32_t id, uint8_t* data, uint8_t len, uint3
     Payload p;
     memcpy(p.bytes, data, len);
     if (cmd == CmdIDs::GetEncoderEstimates) { //default ever 10ms
-        lastPos_ = p.floats[0];
-        lastVel_ = p.floats[1];
+        lastStatus_.position = p.floats[0];
+        lastStatus_.velocity = p.floats[1];
         lastStatusTime_ = now;
     } else if (cmd == CmdIDs::GetBusVoltageCurrent) {
         lastVolt_ = p.floats[0];
@@ -106,6 +112,14 @@ bool ODriveDriver::handleIncoming(uint32_t id, uint8_t* data, uint8_t len, uint3
         lastFaults_ = p.dwords[0];
         lastAxisState_ = p.bytes[4];
         lastHeartbeatTime_ = now;
+        auto state = (OdriveAxisState)lastAxisState_;
+        if (state == OdriveAxisState::Idle) {
+            lastStatus_.mode = MotorMode::Disabled;
+        } else if (state == OdriveAxisState::ClosedLoopControl) {
+            lastStatus_.mode = lastSentMode_;
+        } else {
+            lastStatus_.mode = MotorMode::Unknown;
+        }
     } else if (Serial && Serial.availableForWrite()) {
         Serial.printf(" > o-rx cmd %x len %d: {", (uint8_t) cmd, len);
         for (int i = 0; i < len; i++)
@@ -114,5 +128,6 @@ bool ODriveDriver::handleIncoming(uint32_t id, uint8_t* data, uint8_t len, uint3
     }
     return true;
 }
+
 
 
