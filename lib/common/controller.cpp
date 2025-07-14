@@ -239,10 +239,8 @@ void Controller::loop() {
   if (M5.BtnA.wasPressed()) {
     selectedTune_ = (selectedTune_ + 1) % (NUM_ADJUSTABLES + 1); //+1 for disabled
     if (selectedTune_ < NUM_ADJUSTABLES) {
-      telem_.adjusting = *adjustables_[selectedTune_];
       strncpy(telem_.adjustSrc, adjNames_[selectedTune_].c_str(), sizeof(telem_.adjustSrc) - 1);
     } else {
-      telem_.adjusting = 0.0;
       telem_.adjustSrc[0] = '\0';
     }
     display_.requestRedraw();
@@ -433,6 +431,7 @@ void Controller::loop() {
       display_.getLCD()->setRotation(rot);
       display_.requestRedraw();
     }
+    telem_.adjusting = tunable? *tunable : 0.0;
     drawLCD(now);
     lastDraw = now;
   }
