@@ -275,6 +275,7 @@ void Controller::loop() {
     float pitchFwd = (atan2(-R[2][0], R[2][2]) + PI / 2) * 180.0 / PI;
     bool isUpOnEnd = abs(pitchFwd) < MAX_TILT; //more tilt allowed when balancing
     bool newbalance = isBalancing_ || isUpOnEnd;
+    bool balanceModeSpeed = false;
 
     //control inputs
     float fwd = 0, side = 0, yaw = 0, thr = 0;
@@ -289,11 +290,12 @@ void Controller::loop() {
 
     if (crsf_.isLinkUp() && csrfArm) {
       arm = csrfArm;
-      yawCtrlEnabled_ = crsf_.getChannel(6) > 1400 && crsf_.getChannel(6) < 1600;
-      bool balanceModeEnabled_ = crsf_.getChannel(6) > 1600;
-      bool enableAdjustment = (yawCtrlEnabled_ || balanceModeEnabled_) && (crsf_.getChannel(8) > 1500);
+      bool balanceModeEn = crsf_.getChannel(6) > 1400;
+      balanceModeSpeed = crsf_.getChannel(6) > 1600;
+      bool enableAdjustment = (yawCtrlEnabled_ || balanceModeEn) && (crsf_.getChannel(8) > 1500);
       maxSpeed_ = mapfloat(crsf_.getChannel(7), 1000, 2000, 6, 30); //aux 2: speed selection
-      newbalance &= balanceModeEnabled_;
+      newbalance &= balanceModeEn;
+      yawCtrlEnabled_ = crsf_.getChannel(9) > 1400;
 
       fwd = mapfloat(crsf_.getChannel(2), 1000, 2000, -maxSpeed_, maxSpeed_);
       side = mapfloat(crsf_.getChannel(1), 1000, 2000, -maxSpeed_, maxSpeed_);
@@ -375,14 +377,15 @@ void Controller::loop() {
       if (isBalancing_) {
         // Blend between angle-control and odometry speed control
         const uint32_t balanceChangeDuration = 2000; //ms
-        float pitchGoal = balanceSpeedCtrl_.update(now, fwdSpeed_ - fwd);
-        if ((now - lastBalanceChange_) < balanceChangeDuration) {
+        float pitchGoal = balanceModeSpeed? balanceSpeedCtrl_.update(now, fwdSpeed_ - fwd) : -fwd;
+        if (balanceModeSpeed && (now - lastBalanceChange_) < balanceChangeDuration) {
           const float blendT = (now - lastBalanceChange_) / (float)balanceChangeDuration;
           pitchGoal = blend( -fwd, pitchGoal, blendT);
           if (blendT < 0.5f)
             balanceSpeedCtrl_.reset(); //prevent rampup while not in control
         }
         float torqueCmd = balanceCtrl_.update(now, pitchGoal - pitchFwd); //input is angle
+        torqueCmd *= 10.0; //roughly scale to Nm
         if (canPrint()) {
           Serial.printf("(fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> torque %06.2f\n",
             fwd, pitchGoal, pitchFwd, torqueCmd);
