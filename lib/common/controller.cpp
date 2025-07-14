@@ -1,7 +1,7 @@
 #include "controller.h"
 #include "utils.h"
 #include <Arduino.h>
-#include <cybergear.h>
+#include <odrive.h>
 #include <can_esp32_twai.h>
 #ifdef IS_M5
 #include <M5Unified.h>
@@ -10,7 +10,7 @@
 #include <WiFi.h>
 
 #if NUM_DRIVES == 3
-const uint8_t DRIVE_IDS[NUM_DRIVES] = {0x7D, 0x7E, 0x7F};
+const uint8_t DRIVE_IDS[NUM_DRIVES] = {16, 18, 17}; //3 motors
 #else
 const uint8_t DRIVE_IDS[NUM_DRIVES] = {0};
 #endif
@@ -79,11 +79,12 @@ void Controller::setup() {
   Serial1.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_CRSF_RX, PIN_CRSF_TX);
   crsf_.begin(Serial1);
 
-  twaiInterface_.setup(PIN_CAN_RX, PIN_CAN_TX, &Serial);
+  twaiInterface_.setup(PIN_CAN_RX, PIN_CAN_TX, 250000, &Serial); // 500k default for ODrives
 
   for (int i = 0; i < NUM_DRIVES; i++) {
-    drives_[i] = new CyberGearDriver(DRIVE_IDS[i], &twaiInterface_);
+    drives_[i] = new ODriveDriver(DRIVE_IDS[i], &twaiInterface_);
   }
+  balanceCtrl_.P = 2.0;
 
   for (int i = 0; i < NUM_DRIVES; i++) {
     drives_[i]->setMode(MotorMode::Disabled); // start with disabled mode
@@ -393,6 +394,7 @@ void Controller::loop() {
         fwd = torqueCmd; // Use torque output directly
 
         y = balanceYawCtrl_.update(now, (y + -side) - yawSpeed_); //input is speed, output is torque
+        y *= 10.0; //roughly scale to Nm
         side = 0; //disable side
       } else {
         balanceSpeedCtrl_.reset();
