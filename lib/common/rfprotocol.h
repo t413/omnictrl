@@ -9,11 +9,9 @@ enum class Cmds : int8_t {
 
 struct MotionControl {
     uint32_t state = 0;
-    float fwd = 0;
-    float yaw = 0;
-    float pitch = 0;
-    float roll = 0;
+    float fwd = 0, side = 0, yaw = 0;
     float adjust = 0;
+    float maxSpeed = 0;
     uint32_t timestamp = 0;
 };
 constexpr uint8_t MOTION_CONTROL_SIZE = sizeof(MotionControl);

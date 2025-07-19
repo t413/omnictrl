@@ -19,7 +19,6 @@ void CanEsp32Twai::setup(uint8_t rx, uint8_t tx, int baudrate, Stream* debug) {
         case 125000:  t_config = TWAI_TIMING_CONFIG_125KBITS(); break;
         case 100000:  t_config = TWAI_TIMING_CONFIG_100KBITS(); break;
         case 50000:   t_config = TWAI_TIMING_CONFIG_50KBITS(); break;
-        case 20000:   t_config = TWAI_TIMING_CONFIG_20KBITS(); break;
         default:
             t_config = TWAI_TIMING_CONFIG_1MBITS();
             if (debug) debug->println("Unknown baudrate, defaulting to 1M");

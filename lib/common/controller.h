@@ -18,20 +18,20 @@ class Controller {
   MotorDrive* drives_[NUM_DRIVES];
 
   AlfredoCRSF crsf_;
-  MotionControl lastMotionCmd_;
+  MotionControl lastEspNowCmd_;
+  MotionControl lastCrsfCmd_;
+  MotionControl* activeTx_ = nullptr; //who's in control
   uint8_t remoteMac_[6] = {0}; //14:2B:2F:B0:52:A0 is tx
   bool enabled_ = false;
-  bool lastLinkUp_ = false;
   Madgwick imuFilt_;
   float gyroScale_ = 1.0;
   float gyroZ = 0;
   PIDCtrl yawCtrl_ = PIDCtrl(0.28, 0.08, 0.0, 10);
-  PIDCtrl balanceCtrl_ = PIDCtrl(1.3, 0.20, 0.11, 2); //outputs torque in A
-  PIDCtrl balanceSpeedCtrl_ = PIDCtrl(9.0, 1.9, 0.04, 20, 55); //outputs speed
-  PIDCtrl balanceYawCtrl_ = PIDCtrl(2.4, 0.2, 0.08, 1, 100); //outputs torque
+  PIDCtrl balanceCtrl_ = PIDCtrl(0.06, 0.0, 0.02, 2); //outputs torque in A
+  PIDCtrl balanceSpeedCtrl_ = PIDCtrl(9.0, 0.0, 0.04, 20, 55); //outputs speed
+  PIDCtrl balanceYawCtrl_ = PIDCtrl(2.4, 0.0, 0.08, 1, 100); //outputs torque
   float fwdSpeed_ = 0.0; //fwd/back speed from motor drives
   float yawSpeed_ = 0.0;
-  float maxSpeed_ = 0.0;
   Telem telem_;
   uint32_t lastBalanceChange_ = 0;
   bool yawCtrlEnabled_ = false;
@@ -61,6 +61,7 @@ public:
   void loop();
 
   bool isLinkUp(uint32_t) const;
+  MotionControl getCrsfCtrl(uint32_t now) const;
   uint8_t getValidDriveCount() const;
   void resetPids();
 

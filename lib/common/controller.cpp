@@ -79,7 +79,7 @@ void Controller::setup() {
   Serial1.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_CRSF_RX, PIN_CRSF_TX);
   crsf_.begin(Serial1);
 
-  twaiInterface_.setup(PIN_CAN_RX, PIN_CAN_TX, &Serial);
+  twaiInterface_.setup(PIN_CAN_RX, PIN_CAN_TX, 1000000, &Serial); //1megabaud
 
   for (int i = 0; i < NUM_DRIVES; i++) {
     drives_[i] = new CyberGearDriver(DRIVE_IDS[i], &twaiInterface_);
@@ -124,7 +124,21 @@ void Controller::setup() {
 }
 
 bool Controller::isLinkUp(uint32_t now) const {
-  return crsf_.isLinkUp() || ((now - lastMotionCmd_.timestamp) < 500);
+  return crsf_.isLinkUp() || ((now - lastEspNowCmd_.timestamp) < 500);
+}
+
+MotionControl Controller::getCrsfCtrl(uint32_t now) const {
+  MotionControl ret = {};
+  if (crsf_.isLinkUp()) { //stil use crsf for speed control
+    ret.state = crsf_.getChannel(5) > 1500? 1 : 0;
+    ret.fwd = mapfloat(crsf_.getChannel(2), 1000, 2000, -1, 1);
+    ret.side = mapfloat(crsf_.getChannel(1), 1000, 2000, -1, 1);
+    ret.yaw = mapfloat(crsf_.getChannel(4), 1000, 2000, -1, 1);
+    ret.adjust = mapfloat(crsf_.getChannel(3), 1000, 2000, 0.0, 1.0);
+    ret.maxSpeed = mapfloat(crsf_.getChannel(7), 1000, 2000, 6, 30); //aux 2: speed selection
+    ret.timestamp = now;
+  }
+  return ret;
 }
 
 uint8_t Controller::getValidDriveCount() const {
@@ -144,19 +158,16 @@ void Controller::resetPids() {
 }
 
 void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len) {
-  if (canPrint()) {
-    Serial.printf("RX(%d): [", len);
-    for (int i = 0; i < len; i++)
-      Serial.printf("0x%02x, ", buf[i]);
-    Serial.println("]");
-  }
   auto cmd = len >= 1? (Cmds) buf[0] : Cmds::None;
   if (cmd == Cmds::MotionControl && len == (1 + sizeof(MotionControl))) {
     MotionControl rxmc = *((const MotionControl*) (buf + 1));
     rxmc.timestamp = millis();
-    if (canPrint())
-      Serial.printf("MC: a%d fwd %06.2f yaw %06.2f pitch %06.2f roll %06.2f\n", rxmc.state, rxmc.fwd, rxmc.yaw, rxmc.pitch, rxmc.roll);
-    lastMotionCmd_ = rxmc;
+    // Serial.printf("MC: a%d fwd %06.2f yaw %06.2f side %06.2f\n", rxmc.state, rxmc.fwd, rxmc.yaw, rxmc.side);
+    if (rxmc.state > 0 && lastEspNowCmd_.state == 0) {
+      Serial.println("ESPNow arm");
+      activeTx_ = &lastEspNowCmd_; //take control
+    }
+    lastEspNowCmd_ = rxmc;
 
     if (memcmp(mac, remoteMac_, 6) != 0) {
       if (canPrint())
@@ -189,7 +200,7 @@ uint32_t lastClear = 0;
 void Controller::loop() {
   uint32_t now = millis();
 
-  if ((now - lastPollStats) > (lastLinkUp_? 200 : 500)) {
+  if ((now - lastPollStats) > 200) {
     uint32_t latest = 0;
     for (int i = 0; i < NUM_DRIVES; i++) {
       auto time = drives_[i]->getLastStatusTime();
@@ -220,8 +231,7 @@ void Controller::loop() {
     }
 
     lastPollStats = now;
-    if (canPrint() && !lastLinkUp_)
-      Serial.println("MAC: " + WiFi.macAddress());
+    // Serial.println("MAC: " + WiFi.macAddress());
   }
   if (((now - lastTxStats) > 100) && crsf_.isLinkUp()) {
     crsf_sensor_battery_t crsfBatt = {
@@ -278,50 +288,49 @@ void Controller::loop() {
     bool balanceModeSpeed = false;
 
     //control inputs
-    float fwd = 0, side = 0, yaw = 0, thr = 0;
     bool arm = enabled_;
     // --- CRSF Rx --- //
 
-    bool csrfArm = crsf_.isLinkUp()? crsf_.getChannel(5) > 1500 : false;
-    bool motionArm = lastMotionCmd_.state > 0;
-    if (crsf_.isLinkUp()) { //stil use crsf for speed control
-      maxSpeed_ = mapfloat(crsf_.getChannel(7), 1000, 2000, 6, 30); //aux 2: speed selection
+    auto newctrl = getCrsfCtrl(now);
+    if (newctrl.state && lastCrsfCmd_.state == 0) {
+      activeTx_ = &lastCrsfCmd_; //take control
+      Serial.printf("CRSF arm\n");
+    }
+    lastCrsfCmd_ = newctrl;
+    bool stale = activeTx_ && ((int32_t)(now - activeTx_->timestamp) > 1000);
+
+    if (activeTx_ && (!activeTx_->state || stale)) { //disarmed active ctrl or disconnected
+      MotionControl* otherCtrl = (activeTx_ == &lastCrsfCmd_) ? &lastEspNowCmd_ : &lastCrsfCmd_;
+      if (otherCtrl->state > 0) { //delegate
+        activeTx_ = otherCtrl;
+        Serial.printf("Delegating to %s, stale %d\n", (activeTx_ == &lastCrsfCmd_)? "CRSF" : "ESP-NOW", stale);
+      } else {
+        Serial.printf("Disarming, no active control, stale %d dt %ld\n", stale, now - activeTx_->timestamp);
+        activeTx_ = nullptr; //disarm
+      }
     }
 
-    if (crsf_.isLinkUp() && csrfArm) {
-      arm = csrfArm;
+    if (activeTx_ == &lastCrsfCmd_) { //crsf control has extra features
+      arm = lastCrsfCmd_.state > 0;
       bool balanceModeEn = crsf_.getChannel(6) > 1400;
       balanceModeSpeed = crsf_.getChannel(6) > 1600;
       bool enableAdjustment = (yawCtrlEnabled_ || balanceModeEn) && (crsf_.getChannel(8) > 1500);
-      maxSpeed_ = mapfloat(crsf_.getChannel(7), 1000, 2000, 6, 30); //aux 2: speed selection
       newbalance &= balanceModeEn;
       yawCtrlEnabled_ = crsf_.getChannel(9) > 1400;
-
-      fwd = mapfloat(crsf_.getChannel(2), 1000, 2000, -maxSpeed_, maxSpeed_);
-      side = mapfloat(crsf_.getChannel(1), 1000, 2000, -maxSpeed_, maxSpeed_);
-      yaw = mapfloat(crsf_.getChannel(4), 1000, 2000, -maxSpeed_, maxSpeed_);
-      thr = mapfloat(crsf_.getChannel(3), 1000, 2000, 0.0, 1.0);
-
       if (enableAdjustment && tunable) {
-        *tunable = pow(10, mapfloat(thr, 0, 1, -2, 2));
-        if (thr < 0.01) *tunable = 0; //allow 0 values
+        *tunable = pow(10, mapfloat(lastCrsfCmd_.adjust, 0, 1, -2, 2));
+        if (lastCrsfCmd_.adjust < 0.01) *tunable = 0; //allow 0 values
       }
+    } else if (activeTx_ == &lastEspNowCmd_) {
+      lastEspNowCmd_.maxSpeed = 18;
+    }
 
-    // --- ESP-NOW Tx / Rx --- //
-    } else if (lastMotionCmd_.timestamp > (now - 400) && motionArm) {
-      arm = motionArm;
-      if (!crsf_.isLinkUp())
-        maxSpeed_ = 18;
-      fwd = mapfloat(lastMotionCmd_.fwd, -1, 1, -maxSpeed_, maxSpeed_);
-      yaw = mapfloat(lastMotionCmd_.yaw, -1, 1, -maxSpeed_, maxSpeed_);
-      side = mapfloat(lastMotionCmd_.roll, -30, 30, -maxSpeed_, maxSpeed_); //this is in degrees tilt
-      side = constrain(side, -maxSpeed_, maxSpeed_);
-    } else { // no control input
-      arm = false;
+    arm = activeTx_ && (activeTx_->state > 0);
+
+    if (!arm) {
       yawCtrlEnabled_ = false;
       newbalance = false;
-    }
-    if (isBalancing_ && newbalance && !isUpOnEnd) {
+    } else if (isBalancing_ && newbalance && !isUpOnEnd) {
       if ((now - lastBalanceChange_) > 2000) //extra leeway when getting going
         newbalance = false;
       else if (abs(pitchFwd) > MAX_TILT * 1.2)
@@ -336,7 +345,6 @@ void Controller::loop() {
 
     //main control loop
     if (getValidDriveCount()) { //at least one
-
       //arm/disarm
       if (arm != enabled_) {
         if (canPrint())
@@ -349,8 +357,14 @@ void Controller::loop() {
         display_.requestRedraw();
       }
 
-      yawCtrl_.limit = maxSpeed_; //TODO filter this
-      float y = yawCtrlEnabled_? yawCtrl_.update(now, (-yaw * 100) - gyroZ) : -yaw; //convert yaw to angular rate
+      MotionControl m;
+      if (activeTx_) { m = *activeTx_; }
+      m.fwd  *= m.maxSpeed;
+      m.side *= m.maxSpeed;
+      m.yaw  *= m.maxSpeed;
+
+      yawCtrl_.limit = m.maxSpeed / 4;
+      float y = yawCtrlEnabled_? yawCtrl_.update(now, (-m.yaw * 100) - gyroZ) : -m.yaw; //convert yaw to angular rate
 
 #if NUM_DRIVES == 3
       #define BACK 0
@@ -377,10 +391,10 @@ void Controller::loop() {
       if (isBalancing_) {
         // Blend between angle-control and odometry speed control
         const uint32_t balanceChangeDuration = 2000; //ms
-        float pitchGoal = balanceModeSpeed? balanceSpeedCtrl_.update(now, fwdSpeed_ - fwd) : -fwd;
+        float pitchGoal = balanceModeSpeed? balanceSpeedCtrl_.update(now, fwdSpeed_ - m.fwd) : -m.fwd;
         if (balanceModeSpeed && (now - lastBalanceChange_) < balanceChangeDuration) {
           const float blendT = (now - lastBalanceChange_) / (float)balanceChangeDuration;
-          pitchGoal = blend( -fwd, pitchGoal, blendT);
+          pitchGoal = blend( -m.fwd, pitchGoal, blendT);
           if (blendT < 0.5f)
             balanceSpeedCtrl_.reset(); //prevent rampup while not in control
         }
@@ -388,20 +402,20 @@ void Controller::loop() {
         torqueCmd *= 10.0; //roughly scale to Nm
         if (canPrint()) {
           Serial.printf("(fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> torque %06.2f\n",
-            fwd, pitchGoal, pitchFwd, torqueCmd);
+            m.fwd, pitchGoal, pitchFwd, torqueCmd);
         }
-        fwd = torqueCmd; // Use torque output directly
+        m.fwd = torqueCmd; // Use torque output directly
 
-        y = balanceYawCtrl_.update(now, (y + -side) - yawSpeed_); //input is speed, output is torque
-        side = 0; //disable side
+        y = balanceYawCtrl_.update(now, (y + -m.side) - yawSpeed_); //input is speed, output is torque
+        m.side = 0; //disable side
       } else {
         balanceSpeedCtrl_.reset();
         balanceCtrl_.reset();
       }
       if (arm) {
-        drives_[BACK]->setSetpoint(MotorMode::Speed, isBalancing_? yawSpeed_ : (y  +   0   + side));
-        drives_[LEFT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  - fwd   - side * 1.33/2);
-        drives_[RGHT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  + fwd   - side * 1.33/2);
+        drives_[BACK]->setSetpoint(MotorMode::Speed, isBalancing_? yawSpeed_ : (y  +   0   + m.side));
+        drives_[LEFT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  - m.fwd   - m.side * 1.33/2);
+        drives_[RGHT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  + m.fwd   - m.side * 1.33/2);
       }
 #elif NUM_DRIVES == 4
       #define BK_L 0
@@ -418,10 +432,6 @@ void Controller::loop() {
 #warning "unsupported motor count, is: NUM_DRIVES"
 #endif
       //now output the drive commands
-
-      if (lastLinkUp_ != isLinkUp(now))
-        display_.requestRedraw();
-      lastLinkUp_ = isLinkUp(now);
     } // validCount
     telem_.pitch = pitchFwd; //save for next loop
     lastDrive = now;

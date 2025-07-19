@@ -129,11 +129,12 @@ void RCRemote::loop() {
     setArmState(!armed_);
     display_.requestRedraw();
   }
-  if (M5.BtnB.wasPressed()) {
+  if (M5.BtnB.wasPressed()) { //left side button, toggle IMU control
     lastWasMoved_ = now;
     pitchRollOutEn_ = !pitchRollOutEn_;
     if (pitchRollOutEn_)
       imuFilt_ = Madgwick(0.2, 50); //resets
+    display_.requestRedraw();
   }
   #endif
 
@@ -142,25 +143,34 @@ void RCRemote::loop() {
 
     uint16_t x = 30300, y = 32600;
     joy_.get_joy_adc_16bits_value_xy(&x, &y);
-    bool btn = !joy_.get_button_value();
-    if (btn != lastBtn_ && btn) {
-      setArmState(!armed_);
-    }
-    lastBtn_ = btn;
+    bool joybtn = !joy_.get_button_value();
+
+    lastBtn_ = joybtn;
     MotionControl mc;
     mc.state = armed_? 1 : 0;
     float deadband_ = 0.05;
     float expo_ = 1.5;
     mc.yaw   = expo(deadband( (x - 30300) / 65500.0 * 2, deadband_), expo_);
     mc.fwd   = expo(deadband(-(y - 32600) / 65500.0 * 2, deadband_), expo_);
-    mc.pitch = pitchRollOutEn_? expo(deadband(imuFilt_.getPitchDegree() / 2.0, 1.0), expo_) : 0;
-    mc.roll  = pitchRollOutEn_? expo(deadband(imuFilt_.getRollDegree()  / 2.0, 1.0), expo_) : 0;
-    mc.fwd  += -constrain(mc.pitch / 20.0, -1.0, 1.0);
+    if (pitchRollOutEn_) { //use imu roll for side control
+      mc.side = expo(deadband(imuFilt_.getRollDegree(), 10.0) / 20.0, expo_ * 2);
+    } else if (joybtn) { //when joystick is held down, control side
+      mc.side = mc.yaw;
+      mc.yaw = 0;
+    }
+    mc.side = constrain(mc.side, -1.0, 1.0);
+    // mc.roll  = pitchRollOutEn_? expo(deadband(imuFilt_.getRollDegree()  / 2.0, 1.0), expo_) : 0;
     mc.timestamp = now;
     //check for major discontinuity
     if (abs(mc.yaw - lastMotion_.yaw) > 1.0 || abs(mc.fwd - lastMotion_.fwd) > 1.0) {
       Serial.printf("Discontinuity: [%d,%d]\n", x, y);
     } else {
+      //apply smoothing
+      float alpha = 0.3f; //0.3 is good for 25Hz, 0.2 for 50Hz
+      mc.fwd = alpha * lastMotion_.fwd + (1.0f - alpha) * mc.fwd;
+      mc.yaw = alpha * lastMotion_.yaw + (1.0f - alpha) * mc.yaw;
+      mc.side = alpha * lastMotion_.side + (1.0f - alpha) * mc.side;
+
       //send it
       uint8_t data[1 + sizeof(MotionControl)] = {0};
       data[0] = (uint8_t) Cmds::MotionControl;
@@ -170,8 +180,8 @@ void RCRemote::loop() {
     lastMotion_ = mc;
 
     if (canPrint()) {
-      Serial.printf("xy: [%d,%d] -> f,y,p,r: [%.2f,%.2f,\t%.2f,%.2f] -> %s\n",
-        x, y, lastMotion_.fwd, lastMotion_.yaw, lastMotion_.pitch, lastMotion_.roll,
+      Serial.printf("xy: [%d,%d] -> f,y,p,r: [%.2f,%.2f,\t%.2f] -> %s\n",
+        x, y, lastMotion_.fwd, lastMotion_.yaw, lastMotion_.side,
         lastSentFail_? "fail" : "ok"
       );
     }
@@ -239,6 +249,8 @@ void RCRemote::drawLCD(const uint32_t now) {
   lcd->setFont(&FreeMono12pt7b);
   display_.drawCentered(("f" + String(lastMotion_.fwd  )).c_str(), pageBG);
   display_.drawCentered(("y" + String(lastMotion_.yaw  )).c_str(), pageBG);
+  if (pitchRollOutEn_)
+    display_.drawCentered(("s" + String(lastMotion_.side  )).c_str(), pageBG);
 
   // Draw telemetry using the common function
   if ((now - lastTelemetry_.timestamp) < 1000) {
