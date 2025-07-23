@@ -16,7 +16,7 @@ public:
     float D = 0;
     float limit = 0;
     float rampLimit = 0; //ramp limit for output
-    float tuneScale = 0.1; //scale factor for tuning
+    float tuneScale = 0.01; //scale factor for tuning
 
 protected:
     float prevErr = 0;

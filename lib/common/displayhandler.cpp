@@ -108,7 +108,7 @@ void DisplayHandler::drawTelem(const Telem& telem, uint32_t now, uint16_t backgr
     if (!stale && telem.adjustSrc[0]) {
         lcd_->setTextColor(SUPERDARKBLUE, WHITE);
         lcd_->setFont(&FreeSansBold9pt7b);
-        String adjustStr = String(telem.adjustSrc) + ":" + String(telem.adjusting, 2);
+        String adjustStr = String(telem.adjustSrc) + ":" + String(telem.adjusting, 3);
         drawCentered(adjustStr.c_str(), WHITE);
     }
 }

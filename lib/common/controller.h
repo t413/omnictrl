@@ -26,10 +26,10 @@ class Controller {
   Madgwick imuFilt_;
   float gyroScale_ = 1.0;
   float gyroZ = 0;
-  PIDCtrl yawCtrl_ = PIDCtrl(0.28, 0.08, 0.0, 10);
-  PIDCtrl balanceCtrl_ = PIDCtrl(0.06, 0.0, 0.02, 2); //outputs torque in A
-  PIDCtrl balanceSpeedCtrl_ = PIDCtrl(9.0, 0.0, 0.04, 20, 55); //outputs speed
-  PIDCtrl balanceYawCtrl_ = PIDCtrl(2.4, 0.0, 0.08, 1, 100); //outputs torque
+  PIDCtrl yawCtrl_ = PIDCtrl(2.8, 0, 0.0, 30);
+  PIDCtrl balanceCtrl_ = PIDCtrl(0.6, 0.0, 0.1, 2); //outputs torque in A
+  PIDCtrl balanceSpeedCtrl_ = PIDCtrl(90.0, 0.0, 0.4, 30, 60); //outputs speed
+  PIDCtrl balanceYawCtrl_ = PIDCtrl(24.0, 0.0, 0.8, 2, 100); //outputs torque
   float fwdSpeed_ = 0.0; //fwd/back speed from motor drives
   float yawSpeed_ = 0.0;
   Telem telem_;
@@ -38,17 +38,19 @@ class Controller {
   bool isBalancing_ = false;
   DisplayHandler display_;
 
-  static const uint8_t NUM_ADJUSTABLES = 12;
+  static const uint8_t NUM_ADJUSTABLES = 15;
   float* adjustables_[NUM_ADJUSTABLES] = {
       &gyroScale_,
       &balanceCtrl_.P, &balanceCtrl_.I, &balanceCtrl_.D, &balanceCtrl_.rampLimit,
       &balanceSpeedCtrl_.P, &balanceSpeedCtrl_.I, &balanceSpeedCtrl_.D, &balanceSpeedCtrl_.rampLimit,
       &balanceYawCtrl_.P, &balanceYawCtrl_.I, &balanceYawCtrl_.D,
+      &yawCtrl_.P, &yawCtrl_.I, &yawCtrl_.D,
   };
   String adjNames_[NUM_ADJUSTABLES] = {
       "gyroSc",
-      "balP", "balI", "balD", "balRl",
-      "spdP", "spdI", "spdD", "spdRl",
+      "b.P", "b.I", "b.D", "b.Rl",
+      "b.spdP", "b.spdI", "b.spdD", "b.spdRl",
+      "b.yawP", "b.yawI", "b.yawD",
       "yawP", "yawI", "yawD",
   };
   uint8_t selectedTune_ = NUM_ADJUSTABLES; //none selected
