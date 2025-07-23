@@ -106,19 +106,6 @@ void RCRemote::setArmState(bool arm) {
   }
 }
 
-float deadband(float v, float db = 0.05) {
-  //return 0 if v is within deadband
-  //re-scale to have smooth transition to 0
-  if (db == 0) return v;
-  else if (v >  db) return (v - db);
-  else if (v < -db) return (v + db);
-  return 0;
-}
-
-float expo(float v, float e) {
-  return copysign(pow(abs(v), e), v);
-}
-
 void RCRemote::loop() {
   uint32_t now = millis();
 

@@ -8,6 +8,10 @@ String timeAgo(int seconds);
 
 float mapfloat(float x, float in_min, float in_max, float out_min, float out_max);
 
+float deadband(float v, float db = 0.05);
+
+float expo(float v, float e);
+
 extern const char* adafruitRootCert;
 
 String str(const char *fmtStr, ...);

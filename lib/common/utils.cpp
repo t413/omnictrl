@@ -7,6 +7,19 @@ float mapfloat(float x, float in_min, float in_max, float out_min, float out_max
   return (float)(x - in_min) * (out_max - out_min) / (float)(in_max - in_min) + out_min;
 }
 
+float deadband(float v, float db) {
+  //return 0 if v is within deadband
+  //re-scale to have smooth transition to 0
+  if (db == 0) return v;
+  else if (v >  db) return (v - db);
+  else if (v < -db) return (v + db);
+  return 0;
+}
+
+float expo(float v, float e) {
+  return copysign(pow(abs(v), e), v);
+}
+
 String str(const char *fmtStr, ...) {
   static char buf[201] = {'\0'};
   va_list arg_ptr;

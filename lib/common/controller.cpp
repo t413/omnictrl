@@ -131,9 +131,9 @@ MotionControl Controller::getCrsfCtrl(uint32_t now) const {
   MotionControl ret = {};
   if (crsf_.isLinkUp()) { //stil use crsf for speed control
     ret.state = crsf_.getChannel(5) > 1500? 1 : 0;
-    ret.fwd = mapfloat(crsf_.getChannel(2), 1000, 2000, -1, 1);
-    ret.side = mapfloat(crsf_.getChannel(1), 1000, 2000, -1, 1);
-    ret.yaw = mapfloat(crsf_.getChannel(4), 1000, 2000, -1, 1);
+    ret.fwd = deadband(mapfloat(crsf_.getChannel(2), 1000, 2000, -1, 1));
+    ret.side = deadband(mapfloat(crsf_.getChannel(1), 1000, 2000, -1, 1));
+    ret.yaw = deadband(mapfloat(crsf_.getChannel(4), 1000, 2000, -1, 1));
     ret.adjust = mapfloat(crsf_.getChannel(3), 1000, 2000, 0.0, 1.0);
     ret.maxSpeed = mapfloat(crsf_.getChannel(7), 1000, 2000, 6, 30); //aux 2: speed selection
     ret.timestamp = now;
