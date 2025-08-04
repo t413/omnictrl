@@ -1,8 +1,8 @@
 #include "controller.h"
 #include "utils.h"
 #include <Arduino.h>
-#include <cybergear.h>
-#include <can_esp32_twai.h>
+#include <can/cybergear.h>
+#include <can/can_esp32_twai.h>
 #ifdef IS_M5
 #include <M5Unified.h>
 #endif
