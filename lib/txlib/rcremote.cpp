@@ -9,8 +9,6 @@
 #define POS_X 0
 #define POS_Y 1
 
-bool canPrint();
-
 uint8_t broadcastAddress[] = {0xDC, 0x54, 0x75, 0xCB, 0xBA, 0xD0};
 
 // -------------------- //
@@ -30,19 +28,17 @@ void RCRemote::setup() {
 
   Serial.begin(115200);
   Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
-  if (canPrint()) { //only use the virtual serial port if it's available
-    Serial.println("RCRemote setup");
-    Serial.flush();
-  }
+  Serial.println("RCRemote setup");
+  Serial.flush();
   delay(100);
 
   auto jres = joy_.begin(&Wire, JOYSTICK2_ADDR, 32, 33);
-  if (!jres && canPrint())
+  if (!jres)
     Serial.printf("JoyC init failed: %d\n", jres);
 
   WiFi.mode(WIFI_STA);
   auto res = esp_now_init();
-  if (res != ESP_OK && canPrint())
+  if (res != ESP_OK)
     Serial.printf("ESP-NOW init failed: %d\n", res);
   static auto remote_ = this;
   esp_now_register_recv_cb([](const uint8_t *mac, const uint8_t *data, int len) {
@@ -56,7 +52,7 @@ void RCRemote::setup() {
   peerInfo_.channel = 0;
   peerInfo_.encrypt = false;
   res = esp_now_add_peer(&peerInfo_);
-  if (res != ESP_OK && canPrint())
+  if (res != ESP_OK)
     Serial.printf("ESP-NOW add peer failed: %d\n", res);
 
 
@@ -74,8 +70,7 @@ void RCRemote::setup() {
   }
 #endif
 
-  if (canPrint())
-    Serial.println("finished setup");
+  Serial.println("finished setup");
 
   delay(100);
   Serial.printf("Ready. Version %s\n", version_.c_str());
@@ -83,7 +78,7 @@ void RCRemote::setup() {
 
 
 void RCRemote::handleRxPacket(const uint8_t* buf, uint8_t len) {
-  if (canPrint()) {
+  if (Serial && Serial.availableForWrite() > 0) {
     Serial.printf("RX: {");
     for (int i = 0; i < len; i++)
       Serial.printf("0x%02x, ", buf[i]);
@@ -166,12 +161,10 @@ void RCRemote::loop() {
     }
     lastMotion_ = mc;
 
-    if (canPrint()) {
-      Serial.printf("xy: [%d,%d] -> f,y,p,r: [%.2f,%.2f,\t%.2f] -> %s\n",
-        x, y, lastMotion_.fwd, lastMotion_.yaw, lastMotion_.side,
-        lastSentFail_? "fail" : "ok"
-      );
-    }
+    Serial.printf("xy: [%d,%d] -> f,y,p,r: [%.2f,%.2f,\t%.2f] -> %s\n",
+      x, y, lastMotion_.fwd, lastMotion_.yaw, lastMotion_.side,
+      lastSentFail_? "fail" : "ok"
+    );
 
     //show red when armed, dark purple when not
     joy_.set_rgb_color(armed_? 0xFF0000 : 0x100010);

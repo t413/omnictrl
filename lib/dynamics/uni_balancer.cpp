@@ -41,18 +41,20 @@ void UniBalancer::iterate(uint32_t now) {
   auto motion = ctrl_->getActiveTx();
   auto enabled = ctrl_->getEnabled();
   auto telem = ctrl_->getTelem();
+  const auto mstate = motor? motor->getMotorState() : MotorState();
 
   float pitchFwd = imu->getPitchDegree();
   bool isUpOnEnd = abs(pitchFwd) < MAX_TILT; //more tilt allowed when balancing
 
+  Serial.printf("UniBalancer: m%d pitch %06.2f, fwdSpeed %06.2f, enabled %d %0.1fV\n", mstate.mode, pitchFwd, fwdSpeed_, enabled, motor? motor->getVBus() : -1.0f);
+
   //main control loop
-  if (!ctrl_->getDriveCount()) { status_ = "no drives"; return; }
   if (!motion) { status_ = "no motion"; return; }
   if (!motor) { status_ = "no motor"; return; }
 
   float fwd = motion->fwd * motion->maxSpeed;
 
-  fwdSpeed_ = motor->getMotorState().velocity;
+  fwdSpeed_ = mstate.velocity;
   bool balanceModeSpeed = true; //TODO make this adjustable
 
   if (isUpOnEnd && enabled) {

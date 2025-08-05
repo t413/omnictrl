@@ -44,7 +44,7 @@ public:
   void setInterface(CanEsp32Twai* can) { canInterface_ = can; }
   void addAdjustable(float* adjustable, const String& name);
 
-  void setup(DynamicsBase*);
+  void setup(DynamicsBase*, AlfredoCRSF* crsf);
   void loop();
   void disable();
 

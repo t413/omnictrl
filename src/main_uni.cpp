@@ -6,7 +6,7 @@
 #include <uni_balancer.h>
 
 CanEsp32Twai twaiInterface_;
-ODriveDriver motor(21, &twaiInterface_);
+ODriveDriver motor(23, &twaiInterface_);
 
 #define PIN_CRSF_RX 5
 #define PIN_CRSF_TX 6
@@ -23,12 +23,12 @@ void setup() {
   Serial1.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_CRSF_RX, PIN_CRSF_TX);
   crsf_.begin(Serial1);
 
-  twaiInterface_.setup(PIN_CAN_RX, PIN_CAN_TX, 500000, &Serial);
+  twaiInterface_.setup(PIN_CAN_RX, PIN_CAN_TX, 250000, &Serial);
 
   ctrl.addDrive(&motor);
   ctrl.setInterface(&twaiInterface_);
 
-  ctrl.setup(&dynamics);
+  ctrl.setup(&dynamics, &crsf_);
   ctrl.lowVoltageCutoff_ = LOW_BATTERY_VOLTAGE;
 }
 

@@ -32,7 +32,7 @@ void setup() {
   ctrl.addDrive(&mot_left);
   ctrl.setInterface(&twaiInterface_);
 
-  ctrl.setup(&triOmni);
+  ctrl.setup(&triOmni, &crsf_);
   ctrl.lowVoltageCutoff_ = LOW_BATTERY_VOLTAGE;
 }
 

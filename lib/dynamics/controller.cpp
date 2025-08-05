@@ -61,9 +61,10 @@ void Controller::addAdjustable(float* adjustable, const String& name) {
   Serial.println("No space for new adjustable");
 }
 
-void Controller::setup(DynamicsBase* dynamics) {
+void Controller::setup(DynamicsBase* dynamics, AlfredoCRSF* crsf) {
   controller_ = this;
   dynamics_ = dynamics;
+  crsf_ = crsf;
 #ifdef CONFIG_IDF_TARGET_ESP32
   Serial.begin(115200);
 #endif
