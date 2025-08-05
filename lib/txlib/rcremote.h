@@ -25,6 +25,14 @@ class RCRemote {
   Telem lastTelemetry_;
   bool lastSentFail_ = false;
 
+  // Rover discovery
+  static const uint8_t maxRovers_ = 8;
+  uint8_t discoveredRovers_[maxRovers_][6] = {0};
+  uint8_t roverCount_ = 0;
+  uint8_t selectedRover_ = 0;
+  uint32_t lastPing_ = 0;
+
+
 public:
   RCRemote(String version);
   ~RCRemote();
@@ -33,8 +41,13 @@ public:
   void loop();
 
   void setArmState(bool arm);
-  void handleRxPacket(const uint8_t* buf, uint8_t len);
+  void handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len);
   void drawLCD(const uint32_t);
   bool updateIMU();
   const String version_;
+
+  int findClient(const uint8_t* mac);
+  void addClient(const uint8_t* mac);
+  void setTxDest(const uint8_t* mac);
+  const uint8_t* getClientDest() const;
 };

@@ -5,6 +5,8 @@ enum class Cmds : int8_t {
     None = 0,
     MotionControl = 0x13,
     Telemetry = 0x14,
+    Ping = 0x15,
+    PingReply = 0x16,
 };
 
 struct MotionControl {

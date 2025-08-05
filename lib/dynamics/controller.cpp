@@ -176,6 +176,11 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t 
       if (res != ESP_OK && canPrint())
         Serial.printf("ESP-NOW add peer failed: %d\n", res);
     }
+  } else if (cmd == Cmds::Ping) {
+    // Reply to ping with our MAC address
+    uint8_t replyData[1] = {(uint8_t)Cmds::PingReply};
+    esp_now_send(mac, replyData, sizeof(replyData));
+    Serial.printf("Ping received, replying to %02x:%02x:%02x:%02x:%02x:%02x\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   }
 }
 

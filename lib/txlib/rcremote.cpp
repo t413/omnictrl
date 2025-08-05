@@ -9,7 +9,7 @@
 #define POS_X 0
 #define POS_Y 1
 
-uint8_t broadcastAddress[] = {0xDC, 0x54, 0x75, 0xCB, 0xBA, 0xD0};
+const uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // -------------------- //
 // ---- Controller ---- //
@@ -42,7 +42,7 @@ void RCRemote::setup() {
     Serial.printf("ESP-NOW init failed: %d\n", res);
   static auto remote_ = this;
   esp_now_register_recv_cb([](const uint8_t *mac, const uint8_t *data, int len) {
-    remote_->handleRxPacket(data, len);
+    remote_->handleRxPacket(mac, data, len);
   });
   esp_now_register_send_cb([](const uint8_t *mac, esp_now_send_status_t status) {
     remote_->lastSentFail_ = (status == ESP_NOW_SEND_FAIL);
@@ -77,7 +77,7 @@ void RCRemote::setup() {
 }
 
 
-void RCRemote::handleRxPacket(const uint8_t* buf, uint8_t len) {
+void RCRemote::handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len) {
   if (Serial && Serial.availableForWrite() > 0) {
     Serial.printf("RX: {");
     for (int i = 0; i < len; i++)
@@ -88,7 +88,45 @@ void RCRemote::handleRxPacket(const uint8_t* buf, uint8_t len) {
   if (cmd == Cmds::Telemetry && len == (1 + sizeof(Telem))) {
     lastTelemetry_ = *((const Telem*) (buf + 1));
     lastTelemetry_.timestamp = millis();
+  } else if (cmd == Cmds::PingReply) {
+    Serial.printf("Ping reply from %02x:%02x:%02x:%02x:%02x:%02x\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   }
+  if (findClient(mac) == maxRovers_) {
+    Serial.printf("Discovered new rover\n");
+    addClient(mac); // Add newly discovered rover!
+    setTxDest(getClientDest()); // Update peer info to new target if needed
+  }
+}
+
+int RCRemote::findClient(const uint8_t* mac) {
+  for (int i = 0; i < maxRovers_; i++) {
+    if (memcmp(discoveredRovers_[i], mac, 6) == 0) {
+      return i;
+    }
+  }
+  return maxRovers_; // Not found
+}
+
+void RCRemote::addClient(const uint8_t* mac) {
+  const uint8_t idx = roverCount_ % maxRovers_;
+  memcpy(discoveredRovers_[idx], mac, 6);
+  roverCount_++;
+  Serial.printf("Discovered rover %d: %02x:%02x:%02x:%02x:%02x:%02x\n",
+    idx, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  display_.requestRedraw();
+}
+
+void RCRemote::setTxDest(const uint8_t* mac) {
+  // esp_now_del_peer(peerInfo_.peer_addr); // Remove existing peer
+  memcpy(peerInfo_.peer_addr, mac, 6); // Set new destination
+  auto res = esp_now_add_peer(&peerInfo_);
+  if (res != ESP_OK)
+    Serial.printf("ESP-NOW switch peer failed: %d\n", res);
+  Serial.printf("Switched to rover %d: %02x:%02x:%02x:%02x:%02x:%02x\n", selectedRover_, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
+
+const uint8_t* RCRemote::getClientDest() const {
+  return (roverCount_ > 0)? discoveredRovers_[selectedRover_] : broadcastAddress;
 }
 
 void RCRemote::setArmState(bool arm) {
@@ -118,7 +156,21 @@ void RCRemote::loop() {
       imuFilt_ = Madgwick(0.2, 50); //resets
     display_.requestRedraw();
   }
+  if (M5.BtnPWR.wasPressed()) { //right side button, switch between rovers
+    lastWasMoved_ = now;
+    selectedRover_ = roverCount_ > 0? (selectedRover_ + 1) % roverCount_ : 0; //increment / wrap
+    auto newmac = getClientDest();
+    setTxDest(newmac); // Update peer info to new target
+    display_.requestRedraw();
+  }
   #endif
+
+  // Send ping every 500ms
+  if ((now - lastPing_) > 500) {
+    uint8_t pingData[1] = {(uint8_t)Cmds::Ping};
+    esp_now_send(broadcastAddress, pingData, sizeof(pingData));
+    lastPing_ = now;
+  }
 
   if ((now - lastPoll_) > ((armed_ || !powerSaveMode_)? 25 : 200)) {
     updateIMU();
@@ -153,11 +205,12 @@ void RCRemote::loop() {
       mc.yaw = alpha * lastMotion_.yaw + (1.0f - alpha) * mc.yaw;
       mc.side = alpha * lastMotion_.side + (1.0f - alpha) * mc.side;
 
-      //send it
+      //send it to selected rover
       uint8_t data[1 + sizeof(MotionControl)] = {0};
       data[0] = (uint8_t) Cmds::MotionControl;
       memcpy(data + 1, &mc, sizeof(MotionControl));
-      auto result = esp_now_send(broadcastAddress, data, sizeof(data));
+      const uint8_t* target = (roverCount_ > 0)? discoveredRovers_[selectedRover_] : broadcastAddress;
+      auto result = esp_now_send(target, data, sizeof(data));
     }
     lastMotion_ = mc;
 
@@ -214,6 +267,9 @@ void RCRemote::drawLCD(const uint32_t now) {
   auto pageBG = BLACK;
 
   String title = armed_? "GO" : "--";
+  if (roverCount_ > 0) {
+    title += " R" + String(selectedRover_ + 1);
+  }
   if (lastSentFail_) {
     title = "no link";
     fg = RED;
@@ -240,6 +296,14 @@ void RCRemote::drawLCD(const uint32_t now) {
     lcd->setFont(&FreeSans18pt7b);
     lcd->setTextColor(RED, pageBG);
     display_.drawCentered("no telem", pageBG);
+  }
+
+  if (selectedRover_ < maxRovers_) { //always true (for now)
+    lcd->setFont(&FreeMono12pt7b);
+    lcd->setTextColor(bgRainbow, pageBG);
+    auto mac = getClientDest();
+    String roverInfo =  String(mac[5], HEX) + " #" + String(selectedRover_) + "/" + String(roverCount_);
+    display_.drawCentered(roverInfo.c_str(), pageBG);
   }
 
   display_.drawVersion(version_, pageBG);
