@@ -27,6 +27,7 @@ void setup() {
 
   ctrl.addDrive(&motor);
   ctrl.setInterface(&twaiInterface_);
+  dynamics.balCtrl_.tuneScale *= 15.0; //scale up PIDs
 
   ctrl.setup(&dynamics, &crsf_);
   ctrl.lowVoltageCutoff_ = LOW_BATTERY_VOLTAGE;

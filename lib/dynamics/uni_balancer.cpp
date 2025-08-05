@@ -46,8 +46,6 @@ void UniBalancer::iterate(uint32_t now) {
   float pitchFwd = imu->getPitchDegree();
   bool isUpOnEnd = abs(pitchFwd) < MAX_TILT; //more tilt allowed when balancing
 
-  Serial.printf("UniBalancer: m%d pitch %06.2f, fwdSpeed %06.2f, enabled %d %0.1fV\n", mstate.mode, pitchFwd, fwdSpeed_, enabled, motor? motor->getVBus() : -1.0f);
-
   //main control loop
   if (!motion) { status_ = "no motion"; return; }
   if (!motor) { status_ = "no motor"; return; }
@@ -65,7 +63,7 @@ void UniBalancer::iterate(uint32_t now) {
     torqueCmd *= 10.0; //roughly scale to Nm
     Serial.printf("(fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> torque %06.2f\n", fwd, pitchGoal, pitchFwd, torqueCmd);
 
-    motor->setSetpoint(MotorMode::Current, -torqueCmd);
+    motor->setSetpoint(MotorMode::Current, torqueCmd);
   } else {
     speedCtrl_.reset();
     balCtrl_.reset();
