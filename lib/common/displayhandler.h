@@ -2,10 +2,6 @@
 #include <Arduino.h>
 #include "rfprotocol.h"
 
-#ifdef IS_M5
-#include <M5Unified.h>
-#endif
-
 // Forward declaration
 namespace lgfx { inline namespace v1 { class LGFX_Device; struct IFont; } }
 
@@ -27,6 +23,7 @@ public:
     void setLCD(lgfx::v1::LGFX_Device* lcd);
     void setBorderWidth(uint16_t width);
     void requestRedraw();
+    void setRotation(int rotation);
 
     // Layout functions
     void startFrame();
@@ -36,12 +33,12 @@ public:
     void setFont(const lgfx::v1::IFont*);
 
     // Text drawing functions
-    void drawTitle(const String& title, uint16_t textColor = BLACK, uint16_t backgroundColor = WHITE);
+    void drawTitle(const String& title, uint16_t textColor = 0x0000, uint16_t backgroundColor = 0xFFFF);
     void drawCentered(const char* text, uint16_t backgroundColor);
 
     // Specialized drawing functions
-    void drawTelem(const Telem& telem, uint32_t now, uint16_t backgroundColor = BLACK);
-    void drawVersion(const String& version, uint16_t backgroundColor = BLACK);
+    void drawTelem(const Telem& telem, uint32_t now, uint16_t backgroundColor = 0x0000);
+    void drawVersion(const String& version, uint16_t backgroundColor = 0x0000);
 
     static uint16_t rainbowColor(float v);
     static uint16_t timeRainbow(uint32_t now);

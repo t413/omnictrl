@@ -1,36 +1,17 @@
 #include "controller.h"
+#include <dynamics_base.h>
+#include <AlfredoCRSF.h>
+#include <can/can_esp32_twai.h>
+#include <motordrive.h>
 #include "utils.h"
 #include <Arduino.h>
-#include <can/cybergear.h>
-#include <can/can_esp32_twai.h>
 #ifdef IS_M5
 #include <M5Unified.h>
 #endif
 #include <esp_now.h>
 #include <WiFi.h>
 
-#if NUM_DRIVES == 3
-const uint8_t DRIVE_IDS[NUM_DRIVES] = {0x7D, 0x7E, 0x7F};
-#else
-const uint8_t DRIVE_IDS[NUM_DRIVES] = {0};
-#endif
-#if defined(ARDUINO_M5Stack_ATOMS3)
-#define PIN_CRSF_RX 5
-#define PIN_CRSF_TX 6
-#define PIN_CAN_RX 1
-#define PIN_CAN_TX 2
-#elif defined(ARDUINO_M5Stick_C)
-#define PIN_CRSF_RX 33
-#define PIN_CRSF_TX 32
-#define PIN_CAN_RX 26
-#define PIN_CAN_TX 36
-#else
-#error "unknown board"
-#endif
-
-#define MAX_TILT 30.0
 constexpr uint32_t IMU_UPDATE_PERIOD = 20; //ms
-#define LOW_BATTERY_VOLTAGE 21.0
 
 bool canPrint() {
   #if ARDUINO_USB_CDC_ON_BOOT
@@ -39,9 +20,6 @@ bool canPrint() {
   return true;
   #endif
 }
-
-
-CanEsp32Twai twaiInterface_;
 
 bool validMac(const uint8_t* mac) {
   for (int i = 0; i < 6; i++)
@@ -57,13 +35,35 @@ Controller::~Controller() { }
 
 Controller::Controller(String version) :
         version_(version) {
-  imuFilt_ .setFrequency(1000 / IMU_UPDATE_PERIOD); //50Hz, 20ms
+  imuFilt_.setFrequency(1000 / IMU_UPDATE_PERIOD); //50Hz, 20ms
 }
 
 static Controller* controller_ = nullptr;
 
-void Controller::setup() {
+void Controller::addDrive(MotorDrive* drive) {
+  for (int i = 0; i < MAX_DRIVES; i++) {
+    if (drives_[i] == nullptr) {
+      drives_[i] = drive;
+      return;
+    }
+  }
+  Serial.println("No space for new drive");
+}
+
+void Controller::addAdjustable(float* adjustable, const String& name) {
+  for (int i = 0; i < MAX_ADJUSTABLES; i++) {
+    if (adjustables_[i] == nullptr) {
+      adjustables_[i] = adjustable;
+      adjNames_[i] = name;
+      return;
+    }
+  }
+  Serial.println("No space for new adjustable");
+}
+
+void Controller::setup(DynamicsBase* dynamics) {
   controller_ = this;
+  dynamics_ = dynamics;
 #ifdef CONFIG_IDF_TARGET_ESP32
   Serial.begin(115200);
 #endif
@@ -75,20 +75,6 @@ void Controller::setup() {
     Serial.flush();
   }
   delay(100);
-
-  Serial1.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_CRSF_RX, PIN_CRSF_TX);
-  crsf_.begin(Serial1);
-
-  twaiInterface_.setup(PIN_CAN_RX, PIN_CAN_TX, 1000000, &Serial); //1megabaud
-
-  for (int i = 0; i < NUM_DRIVES; i++) {
-    drives_[i] = new CyberGearDriver(DRIVE_IDS[i], &twaiInterface_);
-  }
-
-  for (int i = 0; i < NUM_DRIVES; i++) {
-    drives_[i]->setMode(MotorMode::Disabled); // start with disabled mode
-    // drives_[i]->driver_.set_position_ref(0.0); // set initial rotor position
-  }
 
   if (canPrint())
     Serial.printf("finished CAN setup\n");
@@ -124,18 +110,18 @@ void Controller::setup() {
 }
 
 bool Controller::isLinkUp(uint32_t now) const {
-  return crsf_.isLinkUp() || ((now - lastEspNowCmd_.timestamp) < 500);
+  return (crsf_ && crsf_->isLinkUp()) || ((now - lastEspNowCmd_.timestamp) < 500);
 }
 
 MotionControl Controller::getCrsfCtrl(uint32_t now) const {
   MotionControl ret = {};
-  if (crsf_.isLinkUp()) { //stil use crsf for speed control
-    ret.state = crsf_.getChannel(5) > 1500? 1 : 0;
-    ret.fwd = deadband(mapfloat(crsf_.getChannel(2), 1000, 2000, -1, 1));
-    ret.side = deadband(mapfloat(crsf_.getChannel(1), 1000, 2000, -1, 1));
-    ret.yaw = deadband(mapfloat(crsf_.getChannel(4), 1000, 2000, -1, 1));
-    ret.adjust = mapfloat(crsf_.getChannel(3), 1000, 2000, 0.0, 1.0);
-    ret.maxSpeed = mapfloat(crsf_.getChannel(7), 1000, 2000, 6, 30); //aux 2: speed selection
+  if (crsf_ && crsf_->isLinkUp()) { //stil use crsf for speed control
+    ret.state = crsf_->getChannel(5) > 1500? 1 : 0;
+    ret.fwd = deadband(mapfloat(crsf_->getChannel(2), 1000, 2000, -1, 1));
+    ret.side = deadband(mapfloat(crsf_->getChannel(1), 1000, 2000, -1, 1));
+    ret.yaw = deadband(mapfloat(crsf_->getChannel(4), 1000, 2000, -1, 1));
+    ret.adjust = mapfloat(crsf_->getChannel(3), 1000, 2000, 0.0, 1.0);
+    ret.maxSpeed = mapfloat(crsf_->getChannel(7), 1000, 2000, 6, 30); //aux 2: speed selection
     ret.timestamp = now;
   }
   return ret;
@@ -143,7 +129,8 @@ MotionControl Controller::getCrsfCtrl(uint32_t now) const {
 
 uint8_t Controller::getValidDriveCount() const {
   uint8_t validCount = 0;
-  for (int i = 0; i < NUM_DRIVES; i++) {
+  for (int i = 0; i < MAX_DRIVES; i++) {
+    if (drives_[i] == nullptr) break;
     bool hasRecent = (millis() - drives_[i]->getLastStatusTime()) < 1000;
     if (hasRecent) validCount++;
   }
@@ -151,10 +138,16 @@ uint8_t Controller::getValidDriveCount() const {
 }
 
 void Controller::resetPids() {
-  yawCtrl_.reset();
-  balanceCtrl_.reset();
-  balanceSpeedCtrl_.reset();
-  balanceYawCtrl_.reset();
+  if (dynamics_) {
+    dynamics_->resetPids();
+  }
+}
+
+uint8_t Controller::getDriveCount() const {
+  for (int i = 0; i < MAX_DRIVES; i++)
+    if (!drives_[i])
+      return i;
+  return MAX_DRIVES;
 }
 
 void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len) {
@@ -185,9 +178,25 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t 
   }
 }
 
-float blend(float a, float b, float t) {
-  t = constrain(t, 0.0f, 1.0f);
-  return (1.0f - t) * a + t * b;
+void Controller::disable() {
+  for (int i = 0; i < MAX_DRIVES; i++)
+    if (drives_[i])
+      drives_[i]->setMode(MotorMode::Disabled);
+  //TODO disable dynamics
+}
+
+bool Controller::quaternionToRotationMatrix(const float q[4], float r[3][3]) {
+  // float R[3][3] = {0};
+  r[0][0] = 1 - 2 * (q[2] * q[2] + q[3] * q[3]);
+  r[0][1] = 2 * (q[1] * q[2] - q[0] * q[3]);
+  r[0][2] = 2 * (q[1] * q[3] + q[0] * q[2]);
+  r[1][0] = 2 * (q[1] * q[2] + q[0] * q[3]);
+  r[1][1] = 1 - 2 * (q[1] * q[1] + q[3] * q[3]);
+  r[1][2] = 2 * (q[2] * q[3] - q[0] * q[1]);
+  r[2][0] = 2 * (q[1] * q[3] - q[0] * q[2]);
+  r[2][1] = 2 * (q[2] * q[3] + q[0] * q[1]);
+  r[2][2] = 1 - 2 * (q[1] * q[1] + q[2] * q[2]);
+  return true;
 }
 
 uint32_t lastDraw = 0;
@@ -202,7 +211,8 @@ void Controller::loop() {
 
   if ((now - lastPollStats) > 200) {
     uint32_t latest = 0;
-    for (int i = 0; i < NUM_DRIVES; i++) {
+    for (int i = 0; i < MAX_DRIVES; i++) {
+      if (!drives_[i]) break;
       auto time = drives_[i]->getLastStatusTime();
       latest = max(latest, time);
       auto state = drives_[i]->getMotorState();
@@ -216,9 +226,8 @@ void Controller::loop() {
         telem_.vbus = v; // initialize filtered VBUS
       telem_.vbus = 0.9 * telem_.vbus + 0.1 * v; // simple low-pass filter
     }
-    if (telem_.vbus < (LOW_BATTERY_VOLTAGE - 0.2) && enabled_) {
-      for (int i = 0; i < NUM_DRIVES; i++)
-          drives_[i]->setMode(MotorMode::Disabled);
+    if (telem_.vbus < (lowVoltageCutoff_ - 0.2) && enabled_) {
+      disable(); //disable if voltage is too low
     }
     telem_.timestamp = latest;
 
@@ -233,22 +242,22 @@ void Controller::loop() {
     lastPollStats = now;
     // Serial.println("MAC: " + WiFi.macAddress());
   }
-  if (((now - lastTxStats) > 100) && crsf_.isLinkUp()) {
+  if (((now - lastTxStats) > 100) && crsf_ && crsf_->isLinkUp()) {
     crsf_sensor_battery_t crsfBatt = {
       .voltage = htobe16((uint16_t)(telem_.vbus * 10.0)),
       .current = htobe16((uint16_t)(0 * 10.0)),
       .capacity = htobe16((uint16_t)(0)) << 8,
       .remaining = (uint8_t)(0),
     };
-    crsf_.queuePacket(CRSF_SYNC_BYTE, CRSF_FRAMETYPE_BATTERY_SENSOR, &crsfBatt, sizeof(crsfBatt));
+    crsf_->queuePacket(CRSF_SYNC_BYTE, CRSF_FRAMETYPE_BATTERY_SENSOR, &crsfBatt, sizeof(crsfBatt));
     lastTxStats = now;
   }
 
   #ifdef IS_M5
   M5.update(); //updates buttons, etc
   if (M5.BtnA.wasPressed()) {
-    selectedTune_ = (selectedTune_ + 1) % (NUM_ADJUSTABLES + 1); //+1 for disabled
-    if (selectedTune_ < NUM_ADJUSTABLES) {
+    selectedTune_ = (selectedTune_ + 1) % (MAX_ADJUSTABLES + 1); //+1 for disabled
+    if (selectedTune_ < MAX_ADJUSTABLES) {
       strncpy(telem_.adjustSrc, adjNames_[selectedTune_].c_str(), sizeof(telem_.adjustSrc) - 1);
     } else {
       telem_.adjustSrc[0] = '\0';
@@ -256,36 +265,17 @@ void Controller::loop() {
     display_.requestRedraw();
   }
   #endif
-  float* tunable = selectedTune_ < NUM_ADJUSTABLES? adjustables_[selectedTune_] : NULL;
+  float* tunable = selectedTune_ < MAX_ADJUSTABLES? adjustables_[selectedTune_] : NULL;
 
   if ((now - lastRefreshDrives) > (IMU_UPDATE_PERIOD - 2)) {
-    for (int i = 0; i < NUM_DRIVES; i++) {
-      drives_[i]->requestStatus();
+    for (int i = 0; i < MAX_DRIVES; i++) {
+      if (drives_[i]) drives_[i]->requestStatus();
     }
     lastRefreshDrives = now; //also updated below, to keep in sync with IMU updates
   }
 
   if ((now - lastDrive) > IMU_UPDATE_PERIOD) {
     updateIMU();
-
-    float q[4] = {0};
-    imuFilt_.getQuaternion(q);
-
-    float R[3][3] = {0};
-    R[0][0] = 1 - 2 * (q[2] * q[2] + q[3] * q[3]);
-    R[0][1] = 2 * (q[1] * q[2] - q[0] * q[3]);
-    R[0][2] = 2 * (q[1] * q[3] + q[0] * q[2]);
-    R[1][0] = 2 * (q[1] * q[2] + q[0] * q[3]);
-    R[1][1] = 1 - 2 * (q[1] * q[1] + q[3] * q[3]);
-    R[1][2] = 2 * (q[2] * q[3] - q[0] * q[1]);
-    R[2][0] = 2 * (q[1] * q[3] - q[0] * q[2]);
-    R[2][1] = 2 * (q[2] * q[3] + q[0] * q[1]);
-    R[2][2] = 1 - 2 * (q[1] * q[1] + q[2] * q[2]);
-
-    float pitchFwd = (atan2(-R[2][0], R[2][2]) + PI / 2) * 180.0 / PI;
-    bool isUpOnEnd = abs(pitchFwd) < MAX_TILT; //more tilt allowed when balancing
-    bool newbalance = isBalancing_ || isUpOnEnd;
-    bool balanceModeSpeed = false;
 
     //control inputs
     bool arm = enabled_;
@@ -310,152 +300,44 @@ void Controller::loop() {
       }
     }
 
-    if (activeTx_ == &lastCrsfCmd_) { //crsf control has extra features
-      arm = lastCrsfCmd_.state > 0;
-      bool balanceModeEn = crsf_.getChannel(6) > 1400;
-      balanceModeSpeed = crsf_.getChannel(6) > 1600;
-      bool enableAdjustment = (yawCtrlEnabled_ || balanceModeEn) && (crsf_.getChannel(8) > 1500);
-      newbalance &= balanceModeEn;
-      yawCtrlEnabled_ = crsf_.getChannel(9) > 1400;
+    if (isCrsfActive()) { //crsf control has extra features
+      bool enableAdjustment = arm && crsf_ && (crsf_->getChannel(8) > 1500);
       if (enableAdjustment && tunable) {
-        *tunable = pow(10, mapfloat(lastCrsfCmd_.adjust, 0, 1, -2, 2));
-        if (lastCrsfCmd_.adjust < 0.01) *tunable = 0; //allow 0 values
+        *tunable = pow(10, mapfloat(activeTx_->adjust, 0, 1, -2, 2));
+        if (activeTx_->adjust < 0.01) *tunable = 0; //allow 0 values
       }
     } else if (activeTx_ == &lastEspNowCmd_) {
       lastEspNowCmd_.maxSpeed = 18;
     }
-
     arm = activeTx_ && (activeTx_->state > 0);
-
-    if (!arm) {
-      yawCtrlEnabled_ = false;
-      newbalance = false;
-    } else if (isBalancing_ && newbalance && !isUpOnEnd) {
-      if ((now - lastBalanceChange_) > 2000) //extra leeway when getting going
-        newbalance = false;
-      else if (abs(pitchFwd) > MAX_TILT * 1.2)
-        newbalance = false; //way too much tilt
+    if ((arm != enabled_)) {
+      display_.requestRedraw();
+      if (dynamics_)
+        dynamics_->enable(arm); //changed state, notify
     }
-    if (isBalancing_ != newbalance) {
-      isBalancing_ = newbalance;
-      if (canPrint()) Serial.printf("Balancing mode %s\n", isBalancing_? "enabled" : "disabled");
-      resetPids();
-      lastBalanceChange_ = now;
+    enabled_ = arm;
+    if (dynamics_) {
+      dynamics_->iterate(now);
     }
 
-    //main control loop
-    if (getValidDriveCount()) { //at least one
-      //arm/disarm
-      if (arm != enabled_) {
-        if (canPrint())
-          Serial.printf("SETTING STATE %s\n", arm? "ARM" : "DISARM");
-        for (int i = 0; i < NUM_DRIVES; i++) {
-          drives_[i]->setMode(arm? MotorMode::Speed : MotorMode::Disabled);
-        }
-        resetPids();
-        enabled_ = arm;
-        display_.requestRedraw();
-      }
-
-      MotionControl m;
-      if (activeTx_) { m = *activeTx_; }
-      m.fwd  *= m.maxSpeed;
-      m.side *= m.maxSpeed;
-      m.yaw  *= m.maxSpeed;
-
-      yawCtrl_.limit = m.maxSpeed / 4;
-      float y = yawCtrlEnabled_? yawCtrl_.update(now, (-m.yaw * 100) - gyroZ) : -m.yaw; //convert yaw to angular rate
-
-#if NUM_DRIVES == 3
-      #define BACK 0
-      #define RGHT 1
-      #define LEFT 2
-
-      fwdSpeed_ = yawSpeed_ = 0;
-      for (int i = 0; i < NUM_DRIVES; i++) {
-        float v = drives_[i]->getMotorState().velocity;
-        if (i != BACK) {
-          fwdSpeed_ += v * (i == RGHT? 1 : -1); //left is positive, right is negative
-          yawSpeed_ += v;
-        }
-      }
-      fwdSpeed_ /= 2;
-      yawSpeed_ /= 2;
-
-      if (lastBalanceChange_ == now) {
-        for (int d = 0; d < NUM_DRIVES; d++)
-          if (d != BACK) //back stays in speed mode
-            drives_[d]->setMode(isBalancing_? MotorMode::Current : MotorMode::Speed);
-      }
-
-      if (isBalancing_) {
-        // Blend between angle-control and odometry speed control
-        const uint32_t balanceChangeDuration = 2000; //ms
-        float pitchGoal = balanceModeSpeed? balanceSpeedCtrl_.update(now, fwdSpeed_ - m.fwd) : -m.fwd;
-        if (balanceModeSpeed && (now - lastBalanceChange_) < balanceChangeDuration) {
-          const float blendT = (now - lastBalanceChange_) / (float)balanceChangeDuration;
-          pitchGoal = blend( -m.fwd, pitchGoal, blendT);
-          if (blendT < 0.5f)
-            balanceSpeedCtrl_.reset(); //prevent rampup while not in control
-        }
-        float torqueCmd = balanceCtrl_.update(now, pitchGoal - pitchFwd); //input is angle
-        torqueCmd *= 10.0; //roughly scale to Nm
-        if (canPrint()) {
-          Serial.printf("(fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> torque %06.2f\n",
-            m.fwd, pitchGoal, pitchFwd, torqueCmd);
-        }
-        m.fwd = torqueCmd; // Use torque output directly
-
-        y = balanceYawCtrl_.update(now, (y + -m.side) - yawSpeed_); //input is speed, output is torque
-        m.side = 0; //disable side
-      } else {
-        balanceSpeedCtrl_.reset();
-        balanceCtrl_.reset();
-      }
-      if (arm) {
-        drives_[BACK]->setSetpoint(MotorMode::Speed, isBalancing_? yawSpeed_ : (y  +   0   + m.side));
-        drives_[LEFT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  - m.fwd   - m.side * 1.33/2);
-        drives_[RGHT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  + m.fwd   - m.side * 1.33/2);
-      }
-#elif NUM_DRIVES == 4
-      #define BK_L 0
-      #define BK_R 1
-      #define FR_R 2
-      #define FR_L 3
-      // yaw, fwd
-      vels[BK_L] += y  +  fwd;
-      vels[BK_R] += y  -  fwd;
-      vels[FR_R] += y  -  fwd;
-      vels[FR_L] += y  +  fwd;
-
-#else
-#warning "unsupported motor count, is: NUM_DRIVES"
-#endif
-      //now output the drive commands
-    } // validCount
-    telem_.pitch = pitchFwd; //save for next loop
     lastDrive = now;
     lastRefreshDrives = now; //keep drive refresh in sync with this task
-  }
+  } //IMU timing
 
   if ((now - lastDraw) > 60 || display_.isRedrawRequired()) {
-    uint8_t rot = (isBalancing_ || (abs(telem_.pitch) < MAX_TILT)) ? 0 : 2;
-    if (display_.getLCD()->getRotation() != rot) {
-      display_.getLCD()->setRotation(rot);
-      display_.requestRedraw();
-    }
     telem_.adjusting = tunable? *tunable : 0.0;
     drawLCD(now);
     lastDraw = now;
   }
 
-  crsf_.update();
+  if (crsf_)
+    crsf_->update();
 
-  while (twaiInterface_.available()) {
-    CanMessage message = twaiInterface_.readOne();
+  while (canInterface_ && canInterface_->available()) {
+    CanMessage message = canInterface_->readOne();
     bool handled = false;
-    for (int i = 0; i < NUM_DRIVES; i++) {
-      if (drives_[i]->handleIncoming(message.id, message.data, message.len, now))
+    for (int i = 0; i < MAX_DRIVES; i++) {
+      if (drives_[i] && drives_[i]->handleIncoming(message.id, message.data, message.len, now))
         handled = true;
     }
     if (!handled && Serial) {
@@ -472,6 +354,7 @@ bool Controller::updateIMU() {
   auto res = M5.Imu.isEnabled()? M5.Imu.update() : 0;
   if (!res) return false;
   auto data = M5.Imu.getImuData(); //no mag data it seems, sadly
+  gyroZ = -data.gyro.z;
   imuFilt_.updateIMU<0,'D'>(-data.gyro.y * gyroScale_, -data.gyro.x * gyroScale_, -data.gyro.z, data.accel.y, data.accel.x, data.accel.z); //acc x/y are swapped
 #endif
   return true;
@@ -483,9 +366,9 @@ void Controller::drawLCD(const uint32_t now) {
   auto fg = BLACK;
   auto pageBG = BLACK;
   auto validCount = getValidDriveCount();
-  String title = isBalancing_? "woah." : enabled_? "wee!" : "howdy";
+  String title = dynamics_? dynamics_->getStatus() : "?";
   String err;
-  if (telem_.vbus > 0.1 && telem_.vbus < LOW_BATTERY_VOLTAGE) err = "low batt!";
+  if (telem_.vbus > 0.1 && telem_.vbus < lowVoltageCutoff_) err = "low batt!";
   else if (!validCount) err = "no drives!";
   else if (!isLinkUp(now)) err = "NO LINK";
   if (!err.isEmpty()) {

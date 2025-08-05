@@ -12,6 +12,8 @@ float deadband(float v, float db = 0.05);
 
 float expo(float v, float e);
 
+float blend(float a, float b, float t); /// linear interpolation between a and b, t = 0..1
+
 extern const char* adafruitRootCert;
 
 String str(const char *fmtStr, ...);

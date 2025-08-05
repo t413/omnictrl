@@ -20,6 +20,11 @@ float expo(float v, float e) {
   return copysign(pow(abs(v), e), v);
 }
 
+float blend(float a, float b, float t) {
+  t = constrain(t, 0.0f, 1.0f);
+  return (1.0f - t) * a + t * b;
+}
+
 String str(const char *fmtStr, ...) {
   static char buf[201] = {'\0'};
   va_list arg_ptr;

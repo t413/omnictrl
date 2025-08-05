@@ -25,6 +25,13 @@ void DisplayHandler::requestRedraw() {
     redrawRequired_ = true;
 }
 
+void DisplayHandler::setRotation(int rotation) {
+  if (lcd_->getRotation() != rotation) {
+    lcd_->setRotation(rotation);
+    requestRedraw();
+  }
+}
+
 void DisplayHandler::startFrame() {
     if (lcd_) lcd_->startWrite();
 }
