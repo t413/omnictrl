@@ -1,8 +1,8 @@
 #include "controller.h"
 #include <dynamics_base.h>
 #include <AlfredoCRSF.h>
-#include <can/can_esp32_twai.h>
-#include <motordrive.h>
+#include <multimotor/can/can_esp32_twai.h>
+#include <multimotor/motordrive.h>
 #include "utils.h"
 #include <Arduino.h>
 #ifdef IS_M5

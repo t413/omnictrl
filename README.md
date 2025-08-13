@@ -30,11 +30,17 @@ _Join my [3D Design Discord](https://3d.t413.com/go/discord?ref=gh-omni) and say
 ## Features:
 
 - Designed to be a universal toolbox of robotics control
-- Works with different CanBus motors!
-  * All using the native ESP32 TWAI CanBus library
-  * Allows different motors on the same shared CAN bus. Right now:
-    - ODrive
-    - Xiaomi CyberGear motors
+- [MultiMotor library](https://github.com/t413/multimotor): control different motor types together on the same CAN bus—mix and match any supported motors!
+  - CANBus Drives: (supports mixed bus with different drives at once)
+    * ODrive (and odrive clone like steadywin motors)
+    * Xiaomi CyberGear motors
+    * RobStride is a work-in-progress
+  - Serial drives (e.g. Dynamixel) coming soon
+- Multi-operator support
+  * Multiple ESP-NOW controllers/CRSF remotes can connect and take-over
+  * Nice seamless switching between controllers
+- Multi-robot support
+  * One remote can switch between multiple robots (work-in-progress)
 - Supports different radio protocols
   * CRSF serial systems: ExpressLRS & Crossfire
   * ESP-NOW for low-latency control without external hardware

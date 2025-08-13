@@ -1,8 +1,8 @@
 #include "version.h"
 #include <controller.h>
 #include <AlfredoCRSF.h>
-#include <can/cybergear.h>
-#include <can/can_esp32_twai.h>
+#include <multimotor/can/cybergear.h>
+#include <multimotor/can/can_esp32_twai.h>
 #include <tri_omni.h>
 
 CanEsp32Twai twaiInterface_;

@@ -1,5 +1,5 @@
 #include "tri_omni.h"
-#include <motordrive.h>
+#include <multimotor/motordrive.h>
 #include <AlfredoCRSF.h>
 #include <MadgwickAHRS.h>
 #include <controller.h>
