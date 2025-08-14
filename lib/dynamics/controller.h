@@ -6,16 +6,14 @@
 #include <MadgwickAHRS.h>
 
 namespace lgfx { inline namespace v1 { class LGFX_Device; } }
-#define MAX_DRIVES 16
 
 class DynamicsBase;
 class AlfredoCRSF;
 class MotorDrive;
-class CanEsp32Twai;
+class DriveManager;
 
 class Controller {
-  MotorDrive* drives_[MAX_DRIVES];
-  CanEsp32Twai* canInterface_ = nullptr;
+  DriveManager* driveManager_ = nullptr;
   DynamicsBase* dynamics_ = nullptr;
 
   AlfredoCRSF* crsf_ = nullptr;
@@ -40,11 +38,9 @@ public:
   Controller(String version);
   ~Controller();
 
-  void addDrive(MotorDrive* drive);
-  void setInterface(CanEsp32Twai* can) { canInterface_ = can; }
   void addAdjustable(float* adjustable, const String& name);
 
-  void setup(DynamicsBase*, AlfredoCRSF* crsf);
+  void setup(DynamicsBase*, DriveManager*, AlfredoCRSF* crsf);
   void loop();
   void disable();
 
@@ -60,7 +56,7 @@ public:
   bool getEnabled() const { return enabled_; }
   Telem* getTelem() { return &telem_; }
   DisplayHandler* getDisplay() { return &display_; }
-  MotorDrive** getDrives() { return drives_; }
+  MotorDrive* const* getDrives() const;
   uint8_t getDriveCount() const;
 
   void handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len);

@@ -16,7 +16,8 @@ void UniBalancer::init() {
   ctrl_->addAdjustable(&speedCtrl_.rampLimit, "spd.Rl");
 
   auto drives = ctrl_->getDrives();
-  for (int i = 0; i < MAX_DRIVES; i++) {
+  auto dcount = ctrl_->getDriveCount();
+  for (uint8_t i = 0; i < dcount; i++) {
     if (drives[i])
       drives[i]->setMode(MotorMode::Disabled); // start with disabled mode
   }
@@ -30,7 +31,8 @@ MotorDrive* UniBalancer::getMotor() {
 void UniBalancer::enable(bool en) {
   resetPids();
   auto drives = ctrl_->getDrives();
-  for (int i = 0; i < MAX_DRIVES; i++)
+  auto dcount = ctrl_->getDriveCount();
+  for (uint8_t i = 0; i < dcount; i++)
     if (drives[i])
       drives[i]->setMode(en? MotorMode::Current : MotorMode::Disabled);
 }

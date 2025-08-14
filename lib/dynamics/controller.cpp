@@ -1,6 +1,7 @@
 #include "controller.h"
 #include <dynamics_base.h>
 #include <AlfredoCRSF.h>
+#include <multimotor/drive_manager.h>
 #include <multimotor/can/can_esp32_twai.h>
 #include <multimotor/motordrive.h>
 #include "utils.h"
@@ -40,16 +41,6 @@ Controller::Controller(String version) :
 
 static Controller* controller_ = nullptr;
 
-void Controller::addDrive(MotorDrive* drive) {
-  for (int i = 0; i < MAX_DRIVES; i++) {
-    if (drives_[i] == nullptr) {
-      drives_[i] = drive;
-      return;
-    }
-  }
-  Serial.println("No space for new drive");
-}
-
 void Controller::addAdjustable(float* adjustable, const String& name) {
   for (int i = 0; i < MAX_ADJUSTABLES; i++) {
     if (adjustables_[i] == nullptr) {
@@ -61,9 +52,10 @@ void Controller::addAdjustable(float* adjustable, const String& name) {
   Serial.println("No space for new adjustable");
 }
 
-void Controller::setup(DynamicsBase* dynamics, AlfredoCRSF* crsf) {
+void Controller::setup(DynamicsBase* dynamics, DriveManager* mgr, AlfredoCRSF* crsf) {
   controller_ = this;
   dynamics_ = dynamics;
+  driveManager_ = mgr;
   crsf_ = crsf;
 #ifdef CONFIG_IDF_TARGET_ESP32
   Serial.begin(115200);
@@ -130,9 +122,13 @@ MotionControl Controller::getCrsfCtrl(uint32_t now) const {
 
 uint8_t Controller::getValidDriveCount() const {
   uint8_t validCount = 0;
-  for (int i = 0; i < MAX_DRIVES; i++) {
-    if (drives_[i] == nullptr) break;
-    bool hasRecent = (millis() - drives_[i]->getLastStatusTime()) < 1000;
+  const uint8_t driveCount = getDriveCount();
+  if (driveCount == 0) return 0;
+  auto drives = driveManager_->getDrives();
+
+  for (int i = 0; i < driveCount; i++) {
+    if (drives[i] == nullptr) break;
+    bool hasRecent = (millis() - drives[i]->getLastStatusTime()) < 1000;
     if (hasRecent) validCount++;
   }
   return validCount;
@@ -144,11 +140,12 @@ void Controller::resetPids() {
   }
 }
 
+MotorDrive* const* Controller::getDrives() const {
+  return driveManager_? driveManager_->getDrives() : nullptr;
+}
+
 uint8_t Controller::getDriveCount() const {
-  for (int i = 0; i < MAX_DRIVES; i++)
-    if (!drives_[i])
-      return i;
-  return MAX_DRIVES;
+  return driveManager_? driveManager_->getCount() : 0;
 }
 
 void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len) {
@@ -185,9 +182,11 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t 
 }
 
 void Controller::disable() {
-  for (int i = 0; i < MAX_DRIVES; i++)
-    if (drives_[i])
-      drives_[i]->setMode(MotorMode::Disabled);
+  auto drives = getDrives();
+  auto count = getDriveCount();
+  for (int i = 0; i < count; i++)
+    if (drives[i])
+      drives[i]->setMode(MotorMode::Disabled);
   //TODO disable dynamics
 }
 
@@ -214,20 +213,22 @@ uint32_t lastClear = 0;
 
 void Controller::loop() {
   uint32_t now = millis();
+  auto drives = getDrives();
+  auto dcount = getDriveCount();
 
   if ((now - lastPollStats) > 200) {
     uint32_t latest = 0;
-    for (int i = 0; i < MAX_DRIVES; i++) {
-      if (!drives_[i]) break;
-      auto time = drives_[i]->getLastStatusTime();
+    for (int i = 0; i < dcount; i++) {
+      if (!drives[i]) break;
+      auto time = drives[i]->getLastStatusTime();
       latest = max(latest, time);
-      auto state = drives_[i]->getMotorState();
+      auto state = drives[i]->getMotorState();
       if (!enabled_ && state.mode != MotorMode::Disabled)
-        drives_[i]->setMode(MotorMode::Disabled); //should be disabled
-      drives_[i]->fetchVBus();  // Also request VBUS parameter
+        drives[i]->setMode(MotorMode::Disabled); //should be disabled
+      drives[i]->fetchVBus();  // Also request VBUS parameter
       if ((now - time) > 200)
         continue;
-      auto v = drives_[i]->getVBus();
+      auto v = drives[i]->getVBus();
       if (telem_.vbus < 0.1 && v > 0.1)
         telem_.vbus = v; // initialize filtered VBUS
       telem_.vbus = 0.9 * telem_.vbus + 0.1 * v; // simple low-pass filter
@@ -252,7 +253,7 @@ void Controller::loop() {
     crsf_sensor_battery_t crsfBatt = {
       .voltage = htobe16((uint16_t)(telem_.vbus * 10.0)),
       .current = htobe16((uint16_t)(0 * 10.0)),
-      .capacity = htobe16((uint16_t)(0)) << 8,
+      .capacity = (uint16_t)(htobe16((uint16_t)(0)) << 8),
       .remaining = (uint8_t)(0),
     };
     crsf_->queuePacket(CRSF_SYNC_BYTE, CRSF_FRAMETYPE_BATTERY_SENSOR, &crsfBatt, sizeof(crsfBatt));
@@ -274,8 +275,8 @@ void Controller::loop() {
   float* tunable = selectedTune_ < MAX_ADJUSTABLES? adjustables_[selectedTune_] : NULL;
 
   if ((now - lastRefreshDrives) > (IMU_UPDATE_PERIOD - 2)) {
-    for (int i = 0; i < MAX_DRIVES; i++) {
-      if (drives_[i]) drives_[i]->requestStatus();
+    for (int i = 0; i < dcount; i++) {
+      if (drives[i]) drives[i]->requestStatus();
     }
     lastRefreshDrives = now; //also updated below, to keep in sync with IMU updates
   }
@@ -339,20 +340,7 @@ void Controller::loop() {
   if (crsf_)
     crsf_->update();
 
-  while (canInterface_ && canInterface_->available()) {
-    CanMessage message = canInterface_->readOne();
-    bool handled = false;
-    for (int i = 0; i < MAX_DRIVES; i++) {
-      if (drives_[i] && drives_[i]->handleIncoming(message.id, message.data, message.len, now))
-        handled = true;
-    }
-    if (!handled && Serial) {
-      Serial.printf("unhandled message id=%x len=%d: {", message.id, message.len);
-      for (int i = 0; i < message.len; i++)
-        Serial.printf("0x%02x, ", message.data[i]);
-      Serial.println("}");
-    }
-  }
+  driveManager_->iterate(now);
 }
 
 bool Controller::updateIMU() {

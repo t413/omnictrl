@@ -24,7 +24,8 @@ void TriOmni::init() {
   ctrl_->addAdjustable(&yawCtrl_.D, "yaw.D");
 
   auto drives = ctrl_->getDrives();
-  for (int i = 0; i < MAX_DRIVES; i++) {
+  auto dcount = ctrl_->getDriveCount();
+  for (uint8_t i = 0; i < dcount; i++) {
     if (drives[i])
       drives[i]->setMode(MotorMode::Disabled); // start with disabled mode
   }
@@ -33,13 +34,15 @@ void TriOmni::init() {
 void TriOmni::enable(bool en) {
   resetPids();
   auto drives = ctrl_->getDrives();
-  for (int i = 0; i < MAX_DRIVES; i++)
+  auto dcount = ctrl_->getDriveCount();
+  for (uint8_t i = 0; i < dcount; i++)
     if (drives[i])
       drives[i]->setMode(en? MotorMode::Speed : MotorMode::Disabled);
 }
 
 void TriOmni::iterate(uint32_t now) {
   auto drives = ctrl_->getDrives();
+  auto dcount = ctrl_->getDriveCount();
   auto imu = ctrl_->getImuFilter();
   auto motion = ctrl_->getActiveTx();
   auto enabled = ctrl_->getEnabled();
@@ -83,7 +86,7 @@ void TriOmni::iterate(uint32_t now) {
   }
 
   //main control loop
-  if (ctrl_->getDriveCount()) { //at least one
+  if (dcount) { //at least one
 
     MotionControl m;
     if (motion) { m = *motion; }
@@ -99,7 +102,7 @@ void TriOmni::iterate(uint32_t now) {
     #define LEFT 2
 
     fwdSpeed_ = yawSpeed_ = 0;
-    for (int i = 0; i < MAX_DRIVES; i++) {
+    for (uint8_t i = 0; i < dcount; i++) {
       if (!drives[i]) continue;
       float v = drives[i]->getMotorState().velocity;
       if (i != BACK) {
@@ -111,7 +114,7 @@ void TriOmni::iterate(uint32_t now) {
     yawSpeed_ /= 2;
 
     if (lastBalanceChange_ == now) {
-      for (int d = 0; d < MAX_DRIVES; d++)
+      for (uint8_t d = 0; d < dcount; d++)
         if (d != BACK && drives[d]) //back stays in speed mode
           drives[d]->setMode(isBalancing_? MotorMode::Current : MotorMode::Speed);
     }
@@ -138,6 +141,7 @@ void TriOmni::iterate(uint32_t now) {
       balanceCtrl_.reset();
     }
     if (enabled) {
+      //TODO check each drive pointer
       drives[BACK]->setSetpoint(MotorMode::Speed, isBalancing_? yawSpeed_ : (y  +   0   + m.side));
       drives[LEFT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  - m.fwd   - m.side * 1.33/2);
       drives[RGHT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  + m.fwd   - m.side * 1.33/2);
