@@ -4,7 +4,7 @@
 [![Lines of Code](https://tokei.rs/b1/github/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/graphs/code-frequency)
 [![GitHub Repo stars](https://img.shields.io/github/stars/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/network/members)
-[![GitHub issues](https://img.shields.io/github/issues/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/issues)
+![Tests](https://img.shields.io/github/actions/workflow/status/t413/omnictrl/runtests.yml?style=flat-square)
 [![Last commit](https://img.shields.io/github/last-commit/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/commits/main)
 [![Users Total](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscord.com%2Fapi%2Finvites%2FDqJNftD7Hw%3Fwith_counts%3Dtrue&query=%24.approximate_member_count&logo=discord&logoColor=white&label=Users&color=5865F2&style=flat-square)](https://3d.t413.com/go/discord?ref=gh-omni)
 [![Users Online](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscord.com%2Fapi%2Finvites%2FDqJNftD7Hw%3Fwith_counts%3Dtrue&query=%24.approximate_presence_count&label=Online&color=5865F2&style=flat-square)](https://3d.t413.com/go/discord?ref=gh-omni)

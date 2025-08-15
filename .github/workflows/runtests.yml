@@ -1,0 +1,65 @@
+name: PlatformIO Build & Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  actions: read
+  checks: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - name: Cache PlatformIO and pip
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.platformio/
+          ~/.cache/pip
+        key: ${{ runner.os }}-platformio-${{ hashFiles('**/platformio.ini') }}
+        restore-keys: |
+          ${{ runner.os }}-platformio-
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install PlatformIO
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install --upgrade platformio
+
+    - name: PlatformIO Build
+      run: |
+        pio run &&
+        ( cd .pio/build && for d in *; do f="$d/firmware.bin"; [ -f "$f" ] && mv "$f" "../../firmware_${d}.bin" || echo "no file ${f}"; done )
+
+    - name: PlatformIO Tests
+      run: |
+        pio test -e test_native --junit-output-path test-results-main.xml &&
+        ( cd lib/multimotor && pio test -e test_native --junit-output-path ../../test-results-multimotor.xml )
+
+    - name: Upload results
+      uses: actions/upload-artifact@v4
+      with:
+        name: platformio-test-results
+        path: |
+          test-results-*.xml
+          firmware_*.bin
+        if-no-files-found: error
+    - name: Publish test results
+      uses: dorny/test-reporter@v2
+      if: ${{ !cancelled() }}
+      with:
+        name: PlatformIO Tests
+        path: test-results-*.xml
+        reporter: java-junit
