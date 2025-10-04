@@ -57,7 +57,7 @@ void TriOmni::iterate(uint32_t now) {
   float pitchFwd = (atan2(-R[2][0], R[2][2]) + PI / 2) * 180.0 / PI;
   bool isUpOnEnd = abs(pitchFwd) < MAX_TILT; //more tilt allowed when balancing
   bool newbalance = isBalancing_ || isUpOnEnd;
-  bool balanceModeSpeed = false;
+  bool balanceModeSpeed = true;
 
   if (ctrl_->isCrsfActive()) { //crsf control has extra features
     auto crsf = ctrl_->getCrsf();
@@ -66,7 +66,7 @@ void TriOmni::iterate(uint32_t now) {
     newbalance &= balanceModeEn;
     yawCtrlEnabled_ = crsf->getChannel(9) > 1400;
   } else if (motion) {
-    motion->maxSpeed = min(18.0f, motion->maxSpeed); //limit
+    motion->maxSpeed = min(20.0f, motion->maxSpeed); //limit
   }
 
   if (!enabled) {
@@ -92,7 +92,7 @@ void TriOmni::iterate(uint32_t now) {
     if (motion) { m = *motion; }
     m.fwd  *= m.maxSpeed;
     m.side *= m.maxSpeed;
-    m.yaw  *= m.maxSpeed;
+    m.yaw   = isBalancing_? expo(m.yaw, 2) * 8 : m.maxSpeed * m.yaw; //less yaw when balancing
 
     yawCtrl_.limit = m.maxSpeed / 4;
     float y = yawCtrlEnabled_? yawCtrl_.update(now, (-m.yaw * 100) - ctrl_->gyroZ) : -m.yaw; //convert yaw to angular rate
