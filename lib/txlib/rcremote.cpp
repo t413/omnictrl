@@ -11,6 +11,14 @@
 #define POS_X 0
 #define POS_Y 1
 
+#ifdef ESP32S3
+constexpr int I2S_SDA = 9;
+constexpr int I2S_SCL = 10;
+#else
+constexpr int I2S_SDA = 32;
+constexpr int I2S_SCL = 33;
+#endif
+
 const uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 // -------------------- //
@@ -34,10 +42,12 @@ void RCRemote::setup() {
   Serial.flush();
   delay(100);
 
-  auto jres = joy_.begin(&Wire, JOYSTICK2_ADDR, 32, 33);
+  D_LOG("setting up joystick");
+  auto jres = joy_.begin(&Wire, JOYSTICK2_ADDR, I2S_SDA, I2S_SCL);
   if (!jres)
     D_LOG("JoyC init failed: %d", jres);
 
+  D_LOG("setting up wifi");
   WiFi.mode(WIFI_STA);
   auto res = esp_now_init();
   if (res != ESP_OK)
@@ -59,6 +69,7 @@ void RCRemote::setup() {
 
 
 #ifdef IS_M5
+  D_LOG("setting up m5");
   M5.begin();
   //check if has lcd
   if (M5.Lcd.width() > 0) {
