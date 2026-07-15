@@ -20,7 +20,7 @@ class Controller {
   MotionControl lastEspNowCmd_;
   MotionControl lastCrsfCmd_;
   MotionControl* activeTx_ = nullptr; //who's in control
-  uint8_t remoteMac_[6] = {0}; //14:2B:2F:B0:52:A0 is tx
+  uint8_t remoteMac_[6] = {0};
   bool enabled_ = false;
   Madgwick imuFilt_;
   float gyroScale_ = 1.0;

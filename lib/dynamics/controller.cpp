@@ -1,5 +1,6 @@
 #include "controller.h"
 #include <log.h>
+#include <NowPacket.h>
 #include <dynamics_base.h>
 #include <AlfredoCRSF.h>
 #include <multimotor/drive_manager.h>
@@ -149,10 +150,15 @@ uint8_t Controller::getDriveCount() const {
   return driveManager_? driveManager_->getCount() : 0;
 }
 
-void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len) {
-  auto cmd = len >= 1? (Cmds) buf[0] : Cmds::None;
-  if (cmd == Cmds::MotionControl && len == (1 + sizeof(MotionControl))) {
-    MotionControl rxmc = *((const MotionControl*) (buf + 1));
+void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_t inlen) {
+  comms::NowPacket pkt;
+  if (!pkt.parse(inbuf, inlen)) {
+    D_LOG("unknown pkt data len %d:", inlen);
+    return printBuf(inbuf, inlen);
+  }
+  auto cmd = (Cmds)pkt.type;
+  if (cmd == Cmds::MotionControl && pkt.payloadLen == MOTION_CONTROL_SIZE) {
+    MotionControl rxmc = *((const MotionControl*) pkt.payload);
     rxmc.timestamp = millis();
     // Serial.printf("MC: a%d fwd %06.2f yaw %06.2f side %06.2f\n", rxmc.state, rxmc.fwd, rxmc.yaw, rxmc.side);
     if (rxmc.state > 0 && lastEspNowCmd_.state == 0) {
@@ -176,8 +182,9 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t 
     }
   } else if (cmd == Cmds::Ping) {
     // Reply to ping with our MAC address
-    uint8_t replyData[1] = {(uint8_t)Cmds::PingReply};
-    esp_now_send(mac, replyData, sizeof(replyData));
+    uint8_t txBuf[comms::HEADER_OVERHEAD + 8] = {0};
+    uint8_t txLen = comms::NowPacket::serialise((uint8_t)Cmds::PingReply, 0, nullptr, 0, txBuf, sizeof(txBuf));
+    if (txLen > 0) { esp_now_send(mac, txBuf, txLen); }
     D_LOG("Ping received, replying to %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   }
 }
@@ -241,10 +248,9 @@ void Controller::loop() {
 
     // Send telemetry to remote
     if (validMac(remoteMac_)) {
-      uint8_t data[1 + sizeof(Telem)] = {0};
-      data[0] = (uint8_t) Cmds::Telemetry;
-      memcpy(data + 1, &telem_, sizeof(Telem));
-      esp_now_send(remoteMac_, data, sizeof(data));
+      uint8_t txBuf[comms::HEADER_OVERHEAD + sizeof(Telem) + 4] = {0};
+      uint8_t txLen = comms::NowPacket::serialise((uint8_t)Cmds::Telemetry, 0, (uint8_t*)&telem_, sizeof(Telem), txBuf, sizeof(txBuf));
+      if (txLen > 0) { esp_now_send(remoteMac_, txBuf, txLen); }
     }
 
     lastPollStats = now;

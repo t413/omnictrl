@@ -40,6 +40,16 @@ String str(bool v) {
   return v ? " WIN" : " FAIL";
 }
 
+void printBuf(const uint8_t* buf, uint8_t len, HardwareSerial* port) {
+  if (!port) port = &Serial0;
+  if (port && *port && port->availableForWrite() > 0) {
+    port->printf("RX: {");
+    for (int i = 0; i < len; i++)
+      port->printf("0x%02x, ", buf[i]);
+    port->println("}");
+  }
+}
+
 StringPair split(const String &str, const String &del) {
   int at = str.indexOf(del);
   if (at >= 0) return StringPair(str.substring(0, at), str.substring(at + del.length()));

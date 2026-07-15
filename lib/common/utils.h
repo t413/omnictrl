@@ -20,6 +20,8 @@ String str(const char *fmtStr, ...);
 String str(const std::string &s);
 String str(bool v);
 
+void printBuf(const uint8_t* buf, uint8_t len, HardwareSerial* port = nullptr); //serial print a buffer
+
 typedef std::pair<String,String> StringPair;
 StringPair split(const String &str, const String &del);
 bool suffixed(String *str, const String &suff);

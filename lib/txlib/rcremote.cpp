@@ -2,6 +2,7 @@
 #include "utils.h"
 #include <log.h>
 #include <Arduino.h>
+#include <NowPacket.h>
 #ifdef IS_M5
 #include <M5Unified.h>
 #endif
@@ -78,16 +79,16 @@ void RCRemote::setup() {
 }
 
 
-void RCRemote::handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len) {
-  if (Serial && Serial.availableForWrite() > 0) {
-    Serial.printf("RX: {");
-    for (int i = 0; i < len; i++)
-      Serial.printf("0x%02x, ", buf[i]);
-    Serial.println("}");
+void RCRemote::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_t inlen) {
+  comms::NowPacket pkt;
+  if (!pkt.parse(inbuf, inlen)) {
+    D_LOG("unknown pkt data len %d:", inlen);
+    return printBuf(inbuf, inlen);
   }
-  auto cmd = len >= 1? (Cmds) buf[0] : Cmds::None;
-  if (cmd == Cmds::Telemetry && len == (1 + sizeof(Telem))) {
-    lastTelemetry_ = *((const Telem*) (buf + 1));
+
+  auto cmd = (Cmds)pkt.type;
+  if (cmd == Cmds::Telemetry && pkt.payloadLen == sizeof(Telem)) {
+    lastTelemetry_ = *((const Telem*) pkt.payload);
     lastTelemetry_.timestamp = millis();
   } else if (cmd == Cmds::PingReply) {
     D_LOG("Ping reply from %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -168,8 +169,11 @@ void RCRemote::loop() {
 
   // Send ping every 500ms
   if ((now - lastPing_) > 500) {
-    uint8_t pingData[1] = {(uint8_t)Cmds::Ping};
-    esp_now_send(broadcastAddress, pingData, sizeof(pingData));
+    uint8_t txBuf[comms::HEADER_OVERHEAD] = {0};
+    uint8_t txLen = comms::NowPacket::serialise((uint8_t)Cmds::Ping, 0, nullptr, 0, txBuf, sizeof(txBuf));
+    if (txLen > 0) {
+      auto result = esp_now_send(broadcastAddress, txBuf, txLen);
+    }
     lastPing_ = now;
   }
 
@@ -207,11 +211,12 @@ void RCRemote::loop() {
       mc.side = alpha * lastMotion_.side + (1.0f - alpha) * mc.side;
 
       //send it to selected rover
-      uint8_t data[1 + sizeof(MotionControl)] = {0};
-      data[0] = (uint8_t) Cmds::MotionControl;
-      memcpy(data + 1, &mc, sizeof(MotionControl));
-      const uint8_t* target = (roverCount_ > 0)? discoveredRovers_[selectedRover_] : broadcastAddress;
-      auto result = esp_now_send(target, data, sizeof(data));
+      uint8_t txBuf[comms::HEADER_OVERHEAD + MOTION_CONTROL_SIZE] = {0};
+      uint8_t txLen = comms::NowPacket::serialise((uint8_t)Cmds::MotionControl, 0, (uint8_t*)&mc, sizeof(MotionControl), txBuf, sizeof(txBuf));
+      if (txLen > 0) {
+          const uint8_t* target = (roverCount_ > 0)? discoveredRovers_[selectedRover_] : broadcastAddress;
+          auto result = esp_now_send(target, txBuf, txLen);
+      }
     }
     lastMotion_ = mc;
 
