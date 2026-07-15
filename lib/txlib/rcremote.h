@@ -24,6 +24,7 @@ class RCRemote {
   MotionControl lastMotion_;
   Telem lastTelemetry_;
   bool lastSentFail_ = false;
+  uint16_t joyCenterX_ = 0, joyCenterY_ = 0;
 
   // Rover discovery
   static const uint8_t maxRovers_ = 8;

@@ -44,8 +44,10 @@ void RCRemote::setup() {
 
   D_LOG("setting up joystick");
   auto jres = joy_.begin(&Wire, JOYSTICK2_ADDR, I2S_SDA, I2S_SCL);
-  if (!jres)
-    D_LOG("JoyC init failed: %d", jres);
+  if (jres) {
+    joy_.get_joy_adc_16bits_value_xy(&joyCenterX_, &joyCenterY_);
+    D_LOG("joystick center %d %d", joyCenterX_, joyCenterY_);
+  } else D_LOG("JoyC init failed: %d", jres);
 
   D_LOG("setting up wifi");
   WiFi.mode(WIFI_STA);
@@ -191,8 +193,10 @@ void RCRemote::loop() {
   if ((now - lastPoll_) > ((armed_ || !powerSaveMode_)? 25 : 200)) {
     updateIMU();
 
-    uint16_t x = 30300, y = 32600;
+    uint16_t x = 0, y = 0;
     joy_.get_joy_adc_16bits_value_xy(&x, &y);
+    if (x == 0 && y == 0) { D_LOG("dis val"); return; } //no reading
+    if (x == 257 && y == 257) { D_LOG("dis val2"); return; } //error reading
     bool joybtn = !joy_.get_button_value();
 
     lastBtn_ = joybtn;
@@ -200,8 +204,8 @@ void RCRemote::loop() {
     mc.state = armed_? 1 : 0;
     float deadband_ = 0.05;
     float expo_ = 1.5;
-    mc.yaw   = expo(deadband( (x - 30300) / 65500.0 * 2, deadband_), expo_);
-    mc.fwd   = expo(deadband(-(y - 32600) / 65500.0 * 2, deadband_), expo_);
+    mc.yaw   = expo(deadband( (x - joyCenterX_) / 65500.0 * 2, deadband_), expo_);
+    mc.fwd   = expo(deadband(-(y - joyCenterY_) / 65500.0 * 2, deadband_), expo_);
     if (pitchRollOutEn_) { //use imu roll for side control
       mc.side = expo(deadband(imuFilt_.getRollDegree(), 10.0) / 20.0, expo_ * 2);
     } else if (joybtn) { //when joystick is held down, control side
