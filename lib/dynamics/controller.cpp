@@ -1,4 +1,5 @@
 #include "controller.h"
+#include <log.h>
 #include <dynamics_base.h>
 #include <AlfredoCRSF.h>
 #include <multimotor/drive_manager.h>
@@ -49,7 +50,7 @@ void Controller::addAdjustable(float* adjustable, const String& name) {
       return;
     }
   }
-  Serial.println("No space for new adjustable");
+  D_LOG("No space for new adjustable");
 }
 
 void Controller::setup(DynamicsBase* dynamics, DriveManager* mgr, AlfredoCRSF* crsf) {
@@ -64,18 +65,18 @@ void Controller::setup(DynamicsBase* dynamics, DriveManager* mgr, AlfredoCRSF* c
     Serial.begin(115200);
     Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
   if (canPrint()) { //only use the virtual serial port if it's available
-    Serial.println("Controller setup");
+    D_LOG("Controller setup");
     Serial.flush();
   }
   delay(100);
 
   if (canPrint())
-    Serial.printf("finished CAN setup\n");
+    D_LOG("finished CAN setup");
 
   WiFi.mode(WIFI_STA);
   auto res = esp_now_init();
   if (res != ESP_OK && canPrint())
-    Serial.printf("ESP-NOW init failed: %d\n", res);
+    D_LOG("ESP-NOW init failed: %d", res);
   esp_now_register_recv_cb([](const uint8_t *mac, const uint8_t *data, int len) {
     if (controller_)
       controller_->handleRxPacket(mac, data, len);
@@ -97,7 +98,7 @@ void Controller::setup(DynamicsBase* dynamics, DriveManager* mgr, AlfredoCRSF* c
 #endif
 
   if (canPrint())
-    Serial.println("finished setup");
+    D_LOG("finished setup");
 
   delay(100);
 }
@@ -155,14 +156,14 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t 
     rxmc.timestamp = millis();
     // Serial.printf("MC: a%d fwd %06.2f yaw %06.2f side %06.2f\n", rxmc.state, rxmc.fwd, rxmc.yaw, rxmc.side);
     if (rxmc.state > 0 && lastEspNowCmd_.state == 0) {
-      Serial.println("ESPNow arm");
+      D_LOG("ESPNow arm");
       activeTx_ = &lastEspNowCmd_; //take control
     }
     lastEspNowCmd_ = rxmc;
 
     if (memcmp(mac, remoteMac_, 6) != 0) {
       if (canPrint())
-        Serial.printf("New telemetry target: %02x:%02x:%02x:%02x:%02x:%02x\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        D_LOG("New telemetry target: %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
       memcpy(remoteMac_, mac, 6);
       // Register peer
       esp_now_peer_info_t newpeer = {0};
@@ -171,13 +172,13 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t 
       newpeer.encrypt = false;
       auto res = esp_now_add_peer(&newpeer);
       if (res != ESP_OK && canPrint())
-        Serial.printf("ESP-NOW add peer failed: %d\n", res);
+        D_LOG("ESP-NOW add peer failed: %d", res);
     }
   } else if (cmd == Cmds::Ping) {
     // Reply to ping with our MAC address
     uint8_t replyData[1] = {(uint8_t)Cmds::PingReply};
     esp_now_send(mac, replyData, sizeof(replyData));
-    Serial.printf("Ping received, replying to %02x:%02x:%02x:%02x:%02x:%02x\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    D_LOG("Ping received, replying to %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   }
 }
 
@@ -291,7 +292,7 @@ void Controller::loop() {
     auto newctrl = getCrsfCtrl(now);
     if (newctrl.state && lastCrsfCmd_.state == 0) {
       activeTx_ = &lastCrsfCmd_; //take control
-      Serial.printf("CRSF arm\n");
+      D_LOG("CRSF arm");
     }
     lastCrsfCmd_ = newctrl;
     bool stale = activeTx_ && ((int32_t)(now - activeTx_->timestamp) > 1000);
@@ -300,9 +301,9 @@ void Controller::loop() {
       MotionControl* otherCtrl = (activeTx_ == &lastCrsfCmd_) ? &lastEspNowCmd_ : &lastCrsfCmd_;
       if (otherCtrl->state > 0) { //delegate
         activeTx_ = otherCtrl;
-        Serial.printf("Delegating to %s, stale %d\n", (activeTx_ == &lastCrsfCmd_)? "CRSF" : "ESP-NOW", stale);
+        D_LOG("Delegating to %s, stale %d", (activeTx_ == &lastCrsfCmd_)? "CRSF" : "ESP-NOW", stale);
       } else {
-        Serial.printf("Disarming, no active control, stale %d dt %ld\n", stale, now - activeTx_->timestamp);
+        D_LOG("Disarming, no active control, stale %d dt %ld", stale, now - activeTx_->timestamp);
         activeTx_ = nullptr; //disarm
       }
     }

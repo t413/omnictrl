@@ -1,5 +1,6 @@
 #include "rcremote.h"
 #include "utils.h"
+#include <log.h>
 #include <Arduino.h>
 #ifdef IS_M5
 #include <M5Unified.h>
@@ -28,18 +29,18 @@ void RCRemote::setup() {
 
   Serial.begin(115200);
   Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
-  Serial.println("RCRemote setup");
+  D_LOG("RCRemote setup");
   Serial.flush();
   delay(100);
 
   auto jres = joy_.begin(&Wire, JOYSTICK2_ADDR, 32, 33);
   if (!jres)
-    Serial.printf("JoyC init failed: %d\n", jres);
+    D_LOG("JoyC init failed: %d", jres);
 
   WiFi.mode(WIFI_STA);
   auto res = esp_now_init();
   if (res != ESP_OK)
-    Serial.printf("ESP-NOW init failed: %d\n", res);
+    D_LOG("ESP-NOW init failed: %d", res);
   static auto remote_ = this;
   esp_now_register_recv_cb([](const uint8_t *mac, const uint8_t *data, int len) {
     remote_->handleRxPacket(mac, data, len);
@@ -53,7 +54,7 @@ void RCRemote::setup() {
   peerInfo_.encrypt = false;
   res = esp_now_add_peer(&peerInfo_);
   if (res != ESP_OK)
-    Serial.printf("ESP-NOW add peer failed: %d\n", res);
+    D_LOG("ESP-NOW add peer failed: %d", res);
 
 
 #ifdef IS_M5
@@ -70,10 +71,10 @@ void RCRemote::setup() {
   }
 #endif
 
-  Serial.println("finished setup");
+  D_LOG("finished setup");
 
   delay(100);
-  Serial.printf("Ready. Version %s\n", version_.c_str());
+  D_LOG("Ready. Version %s", version_.c_str());
 }
 
 
@@ -89,10 +90,10 @@ void RCRemote::handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t le
     lastTelemetry_ = *((const Telem*) (buf + 1));
     lastTelemetry_.timestamp = millis();
   } else if (cmd == Cmds::PingReply) {
-    Serial.printf("Ping reply from %02x:%02x:%02x:%02x:%02x:%02x\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    D_LOG("Ping reply from %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   }
   if (findClient(mac) == maxRovers_) {
-    Serial.printf("Discovered new rover\n");
+    D_LOG("Discovered new rover");
     addClient(mac); // Add newly discovered rover!
     setTxDest(getClientDest()); // Update peer info to new target if needed
   }
@@ -111,7 +112,7 @@ void RCRemote::addClient(const uint8_t* mac) {
   const uint8_t idx = roverCount_ % maxRovers_;
   memcpy(discoveredRovers_[idx], mac, 6);
   roverCount_++;
-  Serial.printf("Discovered rover %d: %02x:%02x:%02x:%02x:%02x:%02x\n",
+  D_LOG("Discovered rover %d: %02x:%02x:%02x:%02x:%02x:%02x",
     idx, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   display_.requestRedraw();
 }
@@ -121,8 +122,8 @@ void RCRemote::setTxDest(const uint8_t* mac) {
   memcpy(peerInfo_.peer_addr, mac, 6); // Set new destination
   auto res = esp_now_add_peer(&peerInfo_);
   if (res != ESP_OK)
-    Serial.printf("ESP-NOW switch peer failed: %d\n", res);
-  Serial.printf("Switched to rover %d: %02x:%02x:%02x:%02x:%02x:%02x\n", selectedRover_, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    D_LOG("ESP-NOW switch peer failed: %d", res);
+  D_LOG("Switched to rover %d: %02x:%02x:%02x:%02x:%02x:%02x", selectedRover_, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
 const uint8_t* RCRemote::getClientDest() const {
@@ -197,7 +198,7 @@ void RCRemote::loop() {
     mc.timestamp = now;
     //check for major discontinuity
     if (abs(mc.yaw - lastMotion_.yaw) > 1.0 || abs(mc.fwd - lastMotion_.fwd) > 1.0) {
-      Serial.printf("Discontinuity: [%d,%d]\n", x, y);
+      D_LOG("Discontinuity: [%d,%d]", x, y);
     } else {
       //apply smoothing
       float alpha = 0.3f; //0.3 is good for 25Hz, 0.2 for 50Hz
@@ -214,7 +215,7 @@ void RCRemote::loop() {
     }
     lastMotion_ = mc;
 
-    Serial.printf("xy: [%d,%d] -> f,y,p,r: [%.2f,%.2f,\t%.2f] -> %s\n",
+    D_LOG("xy: [%d,%d] -> f,y,p,r: [%.2f,%.2f,\t%.2f] -> %s",
       x, y, lastMotion_.fwd, lastMotion_.yaw, lastMotion_.side,
       lastSentFail_? "fail" : "ok"
     );

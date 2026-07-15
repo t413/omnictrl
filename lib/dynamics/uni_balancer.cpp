@@ -1,4 +1,5 @@
 #include "uni_balancer.h"
+#include <log.h>
 #include <multimotor/motordrive.h>
 #include <controller.h>
 #include <utils.h>
@@ -63,7 +64,7 @@ void UniBalancer::iterate(uint32_t now) {
     float pitchGoal = balanceModeSpeed? speedCtrl_.update(now, fwdSpeed_ - fwd) : -fwd;
     float torqueCmd = balCtrl_.update(now, pitchGoal - pitchFwd); //input is angle
     torqueCmd *= 10.0; //roughly scale to Nm
-    Serial.printf("(fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> torque %06.2f\n", fwd, pitchGoal, pitchFwd, torqueCmd);
+    D_LOG("(fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> torque %06.2f", fwd, pitchGoal, pitchFwd, torqueCmd);
 
     motor->setSetpoint(MotorMode::Current, torqueCmd);
   } else {

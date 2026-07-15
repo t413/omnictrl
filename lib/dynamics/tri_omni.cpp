@@ -1,4 +1,5 @@
 #include "tri_omni.h"
+#include <log.h>
 #include <multimotor/motordrive.h>
 #include <AlfredoCRSF.h>
 #include <MadgwickAHRS.h>
@@ -80,7 +81,7 @@ void TriOmni::iterate(uint32_t now) {
   }
   if (isBalancing_ != newbalance) {
     isBalancing_ = newbalance;
-    Serial.printf("Balancing mode %s\n", isBalancing_? "enabled" : "disabled");
+    D_LOG("Balancing mode %s", isBalancing_? "enabled" : "disabled");
     resetPids();
     lastBalanceChange_ = now;
   }
@@ -131,7 +132,7 @@ void TriOmni::iterate(uint32_t now) {
       }
       float torqueCmd = balanceCtrl_.update(now, pitchGoal - pitchFwd); //input is angle
       torqueCmd *= 10.0; //roughly scale to Nm
-      Serial.printf("(fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> torque %06.2f\n", m.fwd, pitchGoal, pitchFwd, torqueCmd);
+      D_LOG("(fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> torque %06.2f", m.fwd, pitchGoal, pitchFwd, torqueCmd);
       m.fwd = torqueCmd; // Use torque output directly
 
       y = balanceYawCtrl_.update(now, (y + -m.side) - yawSpeed_); //input is speed, output is torque
