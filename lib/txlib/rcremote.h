@@ -9,6 +9,8 @@
 
 namespace lgfx { inline namespace v1 { class LGFX_Device; } }
 
+constexpr uint32_t BTN_SHORTPRESS_MAX = 500;  // milliseconds
+
 class RCRemote {
   esp_now_peer_info_t peerInfo_;
   M5UnitJoystick2 joy_;
@@ -16,7 +18,8 @@ class RCRemote {
   bool armed_ = false;
   uint32_t lastWasMoved_ = 0;
   bool powerSaveMode_ = false;
-  bool lastBtn_ = false;
+  bool lastJoyBtn_ = false;
+  uint32_t lastJoyBtnChange_ = 0;
   uint32_t lastPoll_ = 0;
   uint32_t lastDraw_ = 0;
   MotionControl lastMotion_;
@@ -49,4 +52,5 @@ public:
   void addClient(const uint8_t* mac);
   void setTxDest(const uint8_t* mac);
   const uint8_t* getClientDest() const;
+  void send(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0, bool broadcast = false);
 };

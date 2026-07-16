@@ -149,6 +149,15 @@ void RCRemote::setArmState(bool arm) {
   }
 }
 
+void RCRemote::send(Cmds cmd, const uint8_t* pyld, uint8_t len, bool broadcast) {
+  uint8_t txBuf[comms::HEADER_OVERHEAD + len] = {0};
+  uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, 0, pyld, len, txBuf, sizeof(txBuf));
+  if (txLen > 0) {
+    const uint8_t* target = (!broadcast && roverCount_ > 0)? discoveredRovers_[selectedRover_] : broadcastAddress;
+    auto result = esp_now_send(target, txBuf, txLen);
+  }
+}
+
 void RCRemote::loop() {
   uint32_t now = millis();
 
@@ -174,23 +183,25 @@ void RCRemote::loop() {
 
   // Send ping every 500ms
   if ((now - lastPing_) > 500) {
-    uint8_t txBuf[comms::HEADER_OVERHEAD] = {0};
-    uint8_t txLen = comms::NowPacket::serialise((uint8_t)Cmds::Ping, 0, nullptr, 0, txBuf, sizeof(txBuf));
-    if (txLen > 0) {
-      auto result = esp_now_send(broadcastAddress, txBuf, txLen);
-    }
+    send(Cmds::Ping, nullptr, 0, true);
     lastPing_ = now;
   }
 
-  if ((now - lastPoll_) > ((armed_ || !powerSaveMode_)? 25 : 200)) {
+  if ((now - lastPoll_) > (armed_? 25 : 200)) {
 
     uint16_t x = 0, y = 0;
     joy_.get_joy_adc_16bits_value_xy(&x, &y);
     if (x == 0 && y == 0) { D_LOG("dis val"); return; } //no reading
     if (x == 257 && y == 257) { D_LOG("dis val2"); return; } //error reading
     bool joybtn = !joy_.get_button_value();
-
-    lastBtn_ = joybtn;
+    uint32_t dbtnt = (now - lastJoyBtnChange_);
+    if (lastJoyBtn_ != joybtn) {
+      if (!joybtn && dbtnt < BTN_SHORTPRESS_MAX) { //short press
+        send(Cmds::ModeChange);
+      }
+      lastJoyBtnChange_ = now;
+    }
+    lastJoyBtn_ = joybtn;
     MotionControl mc;
     mc.state = armed_? 1 : 0;
     float deadband_ = 0.05;
@@ -214,12 +225,7 @@ void RCRemote::loop() {
       mc.side = alpha * lastMotion_.side + (1.0f - alpha) * mc.side;
 
       //send it to selected rover
-      uint8_t txBuf[comms::HEADER_OVERHEAD + MOTION_CONTROL_SIZE] = {0};
-      uint8_t txLen = comms::NowPacket::serialise((uint8_t)Cmds::MotionControl, 0, (uint8_t*)&mc, sizeof(MotionControl), txBuf, sizeof(txBuf));
-      if (txLen > 0) {
-          const uint8_t* target = (roverCount_ > 0)? discoveredRovers_[selectedRover_] : broadcastAddress;
-          auto result = esp_now_send(target, txBuf, txLen);
-      }
+      send(Cmds::MotionControl, (uint8_t*)&mc, sizeof(MotionControl));
     }
     lastMotion_ = mc;
 
