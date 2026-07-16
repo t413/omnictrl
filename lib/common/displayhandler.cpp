@@ -101,7 +101,8 @@ void DisplayHandler::drawTelem(const Telem& telem, uint32_t now, uint16_t backgr
     if (!lcd_) return;
     String status;
     bool stale = false;
-    if ((now - telem.timestamp) > 1000) {
+    int dt = now - telem.timestamp; //avoid now being less
+    if (dt > 1000) {
         status = "stale";
         stale = true;
     } else {

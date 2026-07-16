@@ -348,14 +348,7 @@ void RCRemote::drawLCD(const uint32_t now) {
   } else { display_.drawCentered("no joy", pageBG); }
 
   // Draw telemetry using the common function
-  if (peer && peer->isRecent(now, 1000)) {
-    display_.drawTelem(peer->lastCmd_, now, pageBG);
-  } else {
-    // Show "no telemetry" if no recent data
-    lcd->setFont(&FreeSans18pt7b);
-    lcd->setTextColor(RED, pageBG);
-    display_.drawCentered("no telem", pageBG);
-  }
+  display_.drawTelem(peer->lastCmd_, now, pageBG);
 
   if (true) { //validcount > 1) { //only show when handling multiple bots
     lcd->setFont(&FreeMono12pt7b);
