@@ -48,7 +48,7 @@ public:
 
   void setup(DynamicsBase*, DriveManager*, AlfredoCRSF* crsf);
   void loop();
-  void disable();
+  void disable(String reason = "");
 
   uint8_t findPeer(const uint8_t* mac, bool allownew);
   uint8_t delegatePeer(const CPeer* old, uint32_t now); //switch to secondary controll, if possible
@@ -71,7 +71,7 @@ public:
 
   void send(Cmds cmd, CPeer const* peer, const uint8_t* pyld = nullptr, uint8_t len = 0);
   void broadcast(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0);
-  void sendInfoStr(String);
+  void sendInfoStr(String, CPeer const* peer = nullptr);
   void handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len);
 
   void drawLCD(const uint32_t);

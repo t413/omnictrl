@@ -165,6 +165,7 @@ uint8_t Controller::delegatePeer(const CPeer* old, uint32_t now) {
 }
 
 CPeer* Controller::armActivate(uint8_t peeridx) {
+  auto prev = peerMgr_.findPeer(peerMgr_.activePeer_);
   auto ret = peerMgr_.findPeer(peeridx);
   //TODO safety checks. sticks centered?
   if (ret) { //arming
@@ -172,14 +173,17 @@ CPeer* Controller::armActivate(uint8_t peeridx) {
     for (float f : {m.fwd, m.side, m.yaw}) {
       if (abs(f) > 0.06) {
         D_LOG("arm-activate SAFETY CHECK FAIL (peer[%d])", peeridx);
+        sendInfoStr("center ctrls", ret);
         return nullptr;
       }
     }
     D_LOG("arm-activate peer[%d]", peeridx);
     peerMgr_.activate(peeridx);
+    if (prev) sendInfoStr("dropped"); //broadcast first
+    sendInfoStr("ACTIVE", ret);
   } else {
     D_LOG("disarm (from[%d] to %d)", peerMgr_.activePeer_, peeridx);
-    disable();
+    disable("disarm");
   }
   return ret;
 }
@@ -233,11 +237,12 @@ void Controller::broadcast(Cmds cmd, const uint8_t* pyld, uint8_t len) {
   auto result = esp_now_send(BROADCAST_ADDRESS, txBuf, txLen);
 }
 
-void Controller::sendInfoStr(String s) {
-  broadcast(Cmds::InfoStr, (const uint8_t*) s.c_str(), s.length());
+void Controller::sendInfoStr(String s, CPeer const* peer) {
+  if (peer) send(Cmds::InfoStr, peer, (const uint8_t*) s.c_str(), s.length());
+  else broadcast(Cmds::InfoStr, (const uint8_t*) s.c_str(), s.length());
 }
 
-void Controller::disable() {
+void Controller::disable(String reason) {
   auto drives = getDrives();
   auto count = getDriveCount();
   for (int i = 0; i < count; i++)
@@ -245,6 +250,7 @@ void Controller::disable() {
       drives[i]->setMode(MotorMode::Disabled);
   //TODO disable dynamics
   peerMgr_.activate(PEERS_MAX);
+  sendInfoStr(reason.isEmpty()? "disable" : reason);
 }
 
 bool Controller::quaternionToRotationMatrix(const float q[4], float r[3][3]) {
@@ -291,7 +297,7 @@ void Controller::loop() {
       telem_.vbus = 0.9 * telem_.vbus + 0.1 * v; // simple low-pass filter
     }
     if (telem_.vbus < (lowVoltageCutoff_ - 0.2) && enabled_) {
-      disable(); //disable if voltage is too low
+      disable("low v"); //disable if voltage is too low
     }
     telem_.timestamp = latest;
 
@@ -327,7 +333,8 @@ void Controller::loop() {
   M5.update(); //updates buttons, etc
   if (M5.BtnA.wasSingleClicked()) {
     if (enabled_) behaviors_.increment();
-    else selectedTune_ = MAX_ADJUSTABLES; //clear
+    else if (selectedTune_ < MAX_ADJUSTABLES) selectedTune_ = MAX_ADJUSTABLES; //clear
+    else sendInfoStr("poke");
   } else if (M5.BtnA.wasDoubleClicked()) {
     selectedTune_ = (selectedTune_ + 1) % (MAX_ADJUSTABLES + 1); //+1 for disabled
     if (selectedTune_ < MAX_ADJUSTABLES) {
