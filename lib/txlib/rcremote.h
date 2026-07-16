@@ -10,6 +10,7 @@
 namespace lgfx { inline namespace v1 { class LGFX_Device; } }
 
 constexpr uint32_t BTN_SHORTPRESS_MAX = 500;  // milliseconds
+constexpr uint32_t DISPLAY_SLEEP_MS = 5000;
 
 class RCRemote {
   esp_now_peer_info_t peerInfo_;
@@ -56,4 +57,6 @@ public:
   void setTxDest(const uint8_t* mac);
   const uint8_t* getClientDest() const;
   void send(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0, bool broadcast = false);
+
+  void setWakeupPower(bool wakeup);
 };

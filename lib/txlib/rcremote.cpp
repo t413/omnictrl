@@ -36,6 +36,8 @@ void RCRemote::setup() {
   Serial.begin(115200);
 #endif
 
+  setCpuFrequencyMhz(80); //lower frequency, better battery
+
   Serial.begin(115200);
   Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
   D_LOG("RCRemote setup");
@@ -225,6 +227,13 @@ void RCRemote::pollJoystick(uint32_t now) {
     lastWasMoved_ = now;
 }
 
+void RCRemote::setWakeupPower(bool wakeup) {
+  powerSaveMode_ = !wakeup;
+  M5.Lcd.setBrightness(wakeup? 200 : 0);
+  if (!armed_ && joystickSetup_ && powerSaveMode_)
+    joy_.set_rgb_color(0); //power off led
+}
+
 void RCRemote::loop() {
   uint32_t now = millis();
 
@@ -266,16 +275,13 @@ void RCRemote::loop() {
 
   uint32_t sinceMoved = now - lastWasMoved_;
   if ((now - lastDraw_) > 60 || display_.isRedrawRequired()) {
-    if (powerSaveMode_ && sinceMoved < 10000) {
-      powerSaveMode_ = false;
-      M5.Lcd.setBrightness(200); //turn on LCD
-
-    } else if (!powerSaveMode_ && !armed_ && sinceMoved > 10000) {
-      joy_.set_rgb_color(0xFFFF00); //yellow
-      //turn of LCD
-      powerSaveMode_ = true;
-      M5.Lcd.setBrightness(0);
-    } else if (!armed_ && powerSaveMode_ && (sinceMoved > 2 * 60 * 1000) && lastSentFail_) { //2 minutes
+    if (powerSaveMode_ && sinceMoved < DISPLAY_SLEEP_MS) {
+      setWakeupPower(true); //turn everything back on
+    } else if (!powerSaveMode_ && sinceMoved > DISPLAY_SLEEP_MS) {
+      setWakeupPower(false); //turn of LCD
+    } else if (!armed_ && powerSaveMode_ && (sinceMoved > 2 * 60 * 1000) && !M5.Power.isCharging()) { //2 minutes
+      D_LOG("power off after %dms", sinceMoved);
+      Serial.flush();
       M5.Power.powerOff();
     } else {
       drawLCD(now);
@@ -283,6 +289,13 @@ void RCRemote::loop() {
     lastDraw_ = now;
   }
 
+  if (powerSaveMode_ && !Serial.isConnected()) {
+    //ESP32 light sleep
+    D_LOG("light sleep after %dms", sinceMoved);
+    Serial.flush();
+    esp_sleep_enable_timer_wakeup(200 * 1000); //200ms
+    esp_light_sleep_start();
+  }
 }
 
 void RCRemote::drawLCD(const uint32_t now) {
