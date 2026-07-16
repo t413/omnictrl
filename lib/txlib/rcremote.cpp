@@ -20,8 +20,6 @@ constexpr int I2S_SDA = 32;
 constexpr int I2S_SCL = 33;
 #endif
 
-const uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-
 // -------------------- //
 // ---- Controller ---- //
 // -------------------- //
@@ -59,7 +57,7 @@ void RCRemote::setup() {
     if (status == ESP_NOW_SEND_FAIL) remote_->sendFails_++;
     remote_->lastSentFailFilt_ = alpha * failv + (1.0f - alpha) * remote_->lastSentFailFilt_;
   });
-  espnowRegisterMac(broadcastAddress);
+  espnowRegisterMac(BROADCAST_ADDRESS);
 
 #ifdef IS_M5
   D_LOG("setting up m5");
@@ -128,14 +126,19 @@ void RCRemote::setArmState(bool arm) {
   armed_ = !armed_;
 }
 
-void RCRemote::send(Cmds cmd, const uint8_t* pyld, uint8_t len, bool broadcast) {
+void RCRemote::send(Cmds cmd, const uint8_t* pyld, uint8_t len) {
   uint8_t txBuf[comms::HEADER_OVERHEAD + len] = {0};
   uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, 0, pyld, len, txBuf, sizeof(txBuf));
-  if (txLen > 0) {
-    auto peer = peerMgr_.findPeer(peerMgr_.activePeer_);
-    const uint8_t* target = (!broadcast && peer && peer->isValid())? peer->mac : broadcastAddress;
-    auto result = esp_now_send(target, txBuf, txLen);
-  }
+  auto peer = peerMgr_.findPeer(peerMgr_.activePeer_);
+  if (peer && txLen) {
+    auto result = esp_now_send(peer->mac, txBuf, txLen);
+  } else D_LOG("tx can't send %p %d", peer, txLen);
+}
+void RCRemote::broadcast(Cmds cmd, const uint8_t* pyld, uint8_t len) {
+  uint8_t txBuf[comms::HEADER_OVERHEAD + len] = {0};
+  uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, 0, pyld, len, txBuf, sizeof(txBuf));
+  if (txLen == 0) { D_LOG("txlen 0"); return; }
+  auto result = esp_now_send(BROADCAST_ADDRESS, txBuf, txLen);
 }
 
 void RCRemote::setupJoystick(uint16_t maxtries) {
@@ -261,6 +264,13 @@ void RCRemote::loop() {
   }
 
   if ((now - lastDraw_) > 60 || display_.isRedrawRequired()) {
+
+    //filter isCharging because it's flakey
+    float ischg = M5.Power.isCharging()? 1.0f : 0.0f;
+    constexpr float alpha = 0.01;
+    isChargingFilt_ = alpha * ischg + (1.0f - alpha) * isChargingFilt_;
+    isCharging_ = isChargingFilt_ > 0.2f;
+
     if (!powerSaveMode_) { drawLCD(now); }
     lastDraw_ = now;
   }
@@ -268,9 +278,9 @@ void RCRemote::loop() {
   // -- power handling -- //
 
   #if ARDUINO_USB_CDC_ON_BOOT
-  bool allowLightSleep = !Serial.isConnected();
+  bool disableLightSleep = Serial.isConnected() || isCharging_; //don't sleep when plugged in!
   #else
-  bool allowLightSleep = true;
+  bool disableLightSleep = false;
   #endif
 
   uint32_t sinceMoved = now - lastWasMoved_;
@@ -278,13 +288,13 @@ void RCRemote::loop() {
     setWakeupPower(false); //turn of LCD
   } else if (powerSaveMode_ && sinceMoved < DISPLAY_SLEEP_MS) {
     setWakeupPower(true); //turn everything back on
-  } else if (!armed_ && powerSaveMode_ && (sinceMoved > IDLE_POWEROFF_SLEEP_MS) && !M5.Power.isCharging()) {
+  } else if (!armed_ && powerSaveMode_ && (sinceMoved > IDLE_POWEROFF_SLEEP_MS) && !disableLightSleep) {
     D_LOG("power off after %dms", sinceMoved);
     Serial.flush();
     delay(100);
     M5.Power.powerOff();
   }
-  if (powerSaveMode_ && allowLightSleep) {
+  if (powerSaveMode_ && !disableLightSleep) {
     //ESP32 light sleep
     D_LOG("light sleep after %dms", sinceMoved);
     Serial.flush();
@@ -351,6 +361,7 @@ void RCRemote::drawLCD(const uint32_t now) {
     lcd->setFont(&FreeMono12pt7b);
     lcd->setCursor(0, lcd->height() - 2 * lcd->fontHeight());
     String pwr = String(M5.Power.getBatteryVoltage() / 1000.0) + "V";
+    if (isCharging_) pwr += "c";
     display_.drawCentered(pwr.c_str(), pageBG);
   }
 
