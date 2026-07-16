@@ -305,6 +305,8 @@ void Controller::loop() {
       .remaining = (uint8_t)(0),
     };
     crsf_->queuePacket(CRSF_SYNC_BYTE, CRSF_FRAMETYPE_BATTERY_SENSOR, &crsfBatt, sizeof(crsfBatt));
+    auto name = behaviors_.getName();
+    crsf_->queuePacket(CRSF_SYNC_BYTE, 0x21, name, strlen(name) + 1);
     lastTxStats = now;
   }
 
@@ -441,6 +443,9 @@ void Controller::drawLCD(const uint32_t now) {
   display_.drawTitle(title.c_str(), fg, bgRainbow);
   display_.clearContent(pageBG, now);
   display_.drawTelem(telem_, now, pageBG);
+  display_.setFont(&FreeSansBold9pt7b);
+  if (behaviors_.isActive())
+    display_.drawCentered(behaviors_.getName(), pageBG);
   display_.drawVersion(version_, pageBG);
   display_.endFrame();
 }

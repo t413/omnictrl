@@ -21,6 +21,7 @@ struct Control {
 struct Behavior {
     virtual ~Behavior() = default;
     static float getIntensity(const MotionControl& m);
+    virtual const char* getName() const = 0;
     virtual Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) = 0;
 };
 
@@ -54,22 +55,26 @@ public:
     float frequency_ = 4.3f;   // Hz
     float radius_ = 1.0f;   // circle radius on fwd axis
 
+    virtual const char* getName() const { return "Happy"; }
     Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) override;
 };
 
 struct Excited : public Behavior {
     Oscillator osc_ = Oscillator(2.0f, 8.0f, 2.0f, 1.0f);  // freqMin, freqMax, ampMin, ampMax
+    virtual const char* getName() const { return "Excited"; }
     Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) override;
 };
 
 struct Scared : public Behavior {
     Oscillator osc_ = Oscillator(2.0f, 7.0f, 2.5f, 1.2f);  // freqMin, freqMax, ampMin, ampMax
+    virtual const char* getName() const { return "Scared"; }
     Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) override;
 };
 
 struct Drunk : public Behavior {
     MotionControl filtered_;
     float alpha_ = 0.04;
+    virtual const char* getName() const { return "Drunk"; }
     Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) override;
 };
 
@@ -84,7 +89,9 @@ struct Manager {
     Manager();
     void increment();
     void clear();
+    bool isActive() const;
 
+    virtual const char* getName() const;
     Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr);
 };
 

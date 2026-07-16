@@ -91,7 +91,7 @@ Control Drunk::iterate(uint32_t now, const MotionControl& in, bool isBalancing, 
 // ------------- //
 
 Manager::Manager() {
-    behaviors_ = {new Happy, new Excited, new Scared, new Drunk};
+    behaviors_ = {new Excited, new Happy, new Scared, new Drunk};
     clear();
 }
 void Manager::increment() {
@@ -101,6 +101,16 @@ void Manager::increment() {
 void Manager::clear() {
     D_LOG("Behavior clear (from #%d)", activeIdx_);
     activeIdx_ = behaviors_.size();
+}
+
+bool Manager::isActive() const {
+    return activeIdx_ >= 0 && activeIdx_ < behaviors_.size();
+}
+
+const char* Manager::getName() const {
+    if (activeIdx_ < 0 || activeIdx_ >= behaviors_.size())
+        return (char*)"None";
+    return behaviors_[activeIdx_]->getName();
 }
 
 Control Manager::iterate(uint32_t now, const MotionControl& in, bool isBalancing, Manager& mgr) {
