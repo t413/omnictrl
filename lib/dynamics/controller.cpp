@@ -150,6 +150,10 @@ uint8_t Controller::getDriveCount() const {
   return driveManager_? driveManager_->getCount() : 0;
 }
 
+behavior::Control Controller::getControl(uint32_t now) {
+  return behaviors_.iterate(now, (activeTx_? *activeTx_ : MotionControl()), dynamics_->isBalancing(), behaviors_);
+}
+
 void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_t inlen) {
   comms::NowPacket pkt;
   if (!pkt.parse(inbuf, inlen)) {
@@ -186,6 +190,8 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_
     uint8_t txLen = comms::NowPacket::serialise((uint8_t)Cmds::PingReply, 0, nullptr, 0, txBuf, sizeof(txBuf));
     if (txLen > 0) { esp_now_send(mac, txBuf, txLen); }
     D_LOG("Ping received, replying to %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  } else if (cmd == Cmds::ModeChange) {
+    behaviors_.increment();
   }
 }
 
@@ -315,17 +321,25 @@ void Controller::loop() {
     }
 
     if (isCrsfActive()) { //crsf control has extra features
-      bool enableAdjustment = arm && crsf_ && (crsf_->getChannel(8) > 1500);
+      const auto chan8 = crsf_? crsf_->getChannel(8) : 0;
+      bool enableAdjustment = arm && crsf_ && (chan8 > 1900);
       if (enableAdjustment && tunable) {
         *tunable = pow(10, mapfloat(activeTx_->adjust, 0, 1, -2, 2));
         if (activeTx_->adjust < 0.01) *tunable = 0; //allow 0 values
+      } else if (chan8 > 1500 && chan8 < 1900 && lastchan8_ < 1500) { //behavior bump
+        behaviors_.increment();
+      } else if (chan8 < 1100) {
+        behaviors_.clear();
       }
+      lastchan8_ = chan8;
     } else if (activeTx_ == &lastEspNowCmd_) {
       lastEspNowCmd_.maxSpeed = 18;
     }
     arm = activeTx_ && (activeTx_->state > 0);
     if ((arm != enabled_)) {
+      // -- ENABLING, arming, whatever -- //
       display_.requestRedraw();
+      behaviors_.clear();
       if (dynamics_)
         dynamics_->enable(arm); //changed state, notify
     }

@@ -18,4 +18,5 @@ public:
   virtual void iterate(uint32_t now) = 0;
   virtual void resetPids() = 0;
   virtual String getStatus() const = 0;
+  virtual bool isBalancing() const { return false; }
 };

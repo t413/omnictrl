@@ -7,6 +7,7 @@ enum class Cmds : int8_t {
     Telemetry = 0x14,
     Ping = 0x15,
     PingReply = 0x16,
+    ModeChange = 0x20,
 };
 
 struct MotionControl {

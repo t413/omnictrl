@@ -2,6 +2,7 @@
 
 #include "rfprotocol.h"
 #include "displayhandler.h"
+#include "behavior.h"
 #include <WString.h>
 #include <MadgwickAHRS.h>
 
@@ -15,6 +16,7 @@ class DriveManager;
 class Controller {
   DriveManager* driveManager_ = nullptr;
   DynamicsBase* dynamics_ = nullptr;
+  behavior::Manager behaviors_;
 
   AlfredoCRSF* crsf_ = nullptr;
   MotionControl lastEspNowCmd_;
@@ -24,6 +26,7 @@ class Controller {
   bool enabled_ = false;
   Madgwick imuFilt_;
   float gyroScale_ = 1.0;
+  int lastchan8_ = 0;
 
   Telem telem_;
   DisplayHandler display_;
@@ -58,6 +61,9 @@ public:
   DisplayHandler* getDisplay() { return &display_; }
   MotorDrive* const* getDrives() const;
   uint8_t getDriveCount() const;
+  behavior::Manager& getBehaviorMgr() { return behaviors_; }
+  behavior::Control getControl(uint32_t now);
+
 
   void handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len);
   void drawLCD(const uint32_t);

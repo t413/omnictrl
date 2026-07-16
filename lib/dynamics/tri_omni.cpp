@@ -45,7 +45,8 @@ void TriOmni::iterate(uint32_t now) {
   auto drives = ctrl_->getDrives();
   auto dcount = ctrl_->getDriveCount();
   auto imu = ctrl_->getImuFilter();
-  auto motion = ctrl_->getActiveTx();
+  auto control = ctrl_->getControl(now);
+  auto& m = control.m;
   auto enabled = ctrl_->getEnabled();
   auto telem = ctrl_->getTelem();
 
@@ -66,8 +67,8 @@ void TriOmni::iterate(uint32_t now) {
     balanceModeSpeed = crsf->getChannel(6) > 1600;
     newbalance &= balanceModeEn;
     yawCtrlEnabled_ = crsf->getChannel(9) > 1400;
-  } else if (motion) {
-    motion->maxSpeed = min(18.0f, motion->maxSpeed); //limit
+  } else {
+    m.maxSpeed = min(18.0f, m.maxSpeed); //limit
   }
 
   if (!enabled) {
@@ -88,12 +89,13 @@ void TriOmni::iterate(uint32_t now) {
 
   //main control loop
   if (dcount) { //at least one
-
-    MotionControl m;
-    if (motion) { m = *motion; }
     m.fwd  *= m.maxSpeed;
     m.side *= m.maxSpeed;
     m.yaw  *= m.maxSpeed;
+
+    m.fwd  += control.d_fwd;
+    m.side += control.d_side;
+    m.yaw  += control.d_yaw;
 
     yawCtrl_.limit = m.maxSpeed / 4;
     float y = yawCtrlEnabled_? yawCtrl_.update(now, (-m.yaw * 100) - ctrl_->gyroZ) : -m.yaw; //convert yaw to angular rate
@@ -124,6 +126,7 @@ void TriOmni::iterate(uint32_t now) {
       // Blend between angle-control and odometry speed control
       const uint32_t balanceChangeDuration = 2000; //ms
       float pitchGoal = balanceModeSpeed? balanceSpeedCtrl_.update(now, fwdSpeed_ - m.fwd) : -m.fwd;
+      pitchGoal += control.pitchOffsetDeg;
       if (balanceModeSpeed && (now - lastBalanceChange_) < balanceChangeDuration) {
         const float blendT = (now - lastBalanceChange_) / (float)balanceChangeDuration;
         pitchGoal = blend( -m.fwd, pitchGoal, blendT);
