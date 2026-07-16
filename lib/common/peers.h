@@ -31,7 +31,7 @@ struct PeerMgr {
   uint8_t getActiveIdx() const { return activePeer_; }
   uint8_t findOrMakePeer(const uint8_t* mac, bool allownew, bool registernewmac, bool allowActivate);
   uint8_t findPeerIdx(const uint8_t* mac) const;
-  uint8_t oldestPeerSlot() const;
+  uint8_t openSlot() const;
   bool isActive(uint8_t idx) const { return idx < PEERS_MAX && idx == activePeer_; }
 
   Peer<CmdT> const* findPeer(uint8_t idx) const { return idx < PEERS_MAX? &peers_[idx] : nullptr; }

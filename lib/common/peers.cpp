@@ -15,14 +15,14 @@ bool validMac(const uint8_t* mac) {
 }
 
 bool espnowRegisterMac(const uint8_t* mac) {
-  if (!mac) { D_LOG("ERROR no mac"); return false; }
+  if (!mac) { D_LOG("peers: ERROR no mac"); return false; }
   #ifdef ESP32
   esp_now_peer_info_t newpeer = {0};
   memcpy(newpeer.peer_addr, mac, 6);
   newpeer.channel = 0;
   newpeer.encrypt = false;
   auto res = esp_now_add_peer(&newpeer);
-  D_LOG("ESP-NOW add peer: %d", res);
+  D_LOG("peers: ESP-NOW add peer: %d", res);
   return (res == ESP_OK);
   #endif
   return false;
@@ -47,13 +47,13 @@ uint8_t PeerMgr<CmdT>::findOrMakePeer(const uint8_t* mac, bool allownew, bool re
   auto peeridx = findPeerIdx(mac);
   if ((peeridx >= PEERS_MAX) && allownew) { //new peer!
     peeridx = newPeer(mac);
-    D_LOG("New peer %02x:%02x:%02x:%02x:%02x:%02x -> %p", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], peeridx);
-    if (peeridx >= PEERS_MAX) return peeridx;
+    if (peeridx >= PEERS_MAX) return peeridx; //no open slot
     if (registernewmac)
       espnowRegisterMac(mac); // Register peer's mac
     if (allowActivate && activePeer_ == PEERS_MAX) {
       activate(peeridx);
     }
+    D_LOG("peers: new peer :%02x:%02x -> [%d] act%d", mac[4], mac[5], peeridx, isActive(peeridx));
   }
   return peeridx;
 }
@@ -68,22 +68,23 @@ uint8_t PeerMgr<CmdT>::findPeerIdx(const uint8_t* mac) const {
 }
 
 template<typename CmdT>
-uint8_t PeerMgr<CmdT>::oldestPeerSlot() const {
-  uint8_t ret = 0;
-  for (uint8_t i = ret; i < PEERS_MAX; i++) {
-    if (!peers_[i].lastPing_) return i; // easy mode
-    if (peers_[i].lastHeard() < peers_[ret].lastHeard())
-      ret = i;
-  }
-  return ret;
+uint8_t PeerMgr<CmdT>::openSlot() const {
+  for (uint8_t i = 0; i < PEERS_MAX; i++)
+    if (peers_[i].lastHeard() == 0 || !peers_[i].isValid())
+      return i;
+  return PEERS_MAX;
 }
 
 template<typename CmdT>
 uint8_t PeerMgr<CmdT>::newPeer(const uint8_t* mac) {
   if (!mac) return UINT8_MAX;
-  uint8_t newslot = oldestPeerSlot();
-  if (newslot >= PEERS_MAX) return UINT8_MAX;
+  uint8_t newslot = openSlot();
+  if (newslot >= PEERS_MAX) {
+    D_LOG("peers can't find slot");
+    return UINT8_MAX;
+  }
   memcpy(peers_[newslot].mac, mac, 6);
+  D_LOG("peers: new slot :%02x:%02x -> %d", mac[4], mac[5], newslot);
   return newslot;
 }
 
