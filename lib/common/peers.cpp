@@ -16,6 +16,12 @@ bool validMac(const uint8_t* mac) {
   return false;
 }
 
+bool macEqual(const uint8_t* mac1, const uint8_t* mac2) {
+  if (!mac1 || !mac2) return false;
+  return memcmp(mac1, mac2, 6) == 0;
+}
+
+
 bool espnowRegisterMac(const uint8_t* mac) {
   if (!mac) { D_LOG("peers: ERROR no mac"); return false; }
   #ifdef ESP32
@@ -64,7 +70,7 @@ template<typename CmdT>
 uint8_t PeerMgr<CmdT>::findPeerIdx(const uint8_t* mac) const {
   if (mac)
     for (int i = 0; i < PEERS_MAX; i++)
-      if (memcmp(peers_[i].mac, mac, 6) == 0)
+      if (macEqual(peers_[i].mac, mac))
         return i;
   return UINT8_MAX;
 }

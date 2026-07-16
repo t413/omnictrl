@@ -218,6 +218,7 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_
 }
 
 void Controller::send(Cmds cmd, CPeer const* peer, const uint8_t* pyld, uint8_t len) {
+  if (peer && peer->isMac(PEER_CRSF_MAC)) return; //skip sending, not a esp-now target
   uint8_t txBuf[comms::HEADER_OVERHEAD + len] = {0};
   uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, PKT_SUBT, pyld, len, txBuf, sizeof(txBuf));
   if (txLen > 0 && peer) {

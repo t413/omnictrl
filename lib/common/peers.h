@@ -3,6 +3,7 @@
 #include "rfprotocol.h"
 
 bool validMac(const uint8_t* mac);
+bool macEqual(const uint8_t* mac1, const uint8_t* mac2);
 bool espnowRegisterMac(const uint8_t* mac);
 extern const uint8_t BROADCAST_ADDRESS[];
 
@@ -15,6 +16,7 @@ struct Peer {
   bool isRecent(uint32_t now, uint32_t threshold=500) const { return (now - lastHeard()) < threshold; }
   bool isArmed() const;
   uint32_t lastHeard() const;
+  bool isMac(const uint8_t* other) const { return macEqual(mac, other); }
   bool isValid() const { return validMac(mac); }
   bool registerMac() { return espnowRegisterMac(mac); }
 };
