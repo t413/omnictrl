@@ -41,7 +41,8 @@ void UniBalancer::enable(bool en) {
 void UniBalancer::iterate(uint32_t now) {
   auto motor = getMotor();
   auto imu = ctrl_->getImuFilter();
-  auto motion = ctrl_->getActiveTx();
+  auto control = ctrl_->getControl(now);
+  auto& motion = control.m;
   auto enabled = ctrl_->getEnabled();
   auto telem = ctrl_->getTelem();
   const auto mstate = motor? motor->getMotorState() : MotorState();
@@ -50,10 +51,9 @@ void UniBalancer::iterate(uint32_t now) {
   bool isUpOnEnd = abs(pitchFwd) < MAX_TILT; //more tilt allowed when balancing
 
   //main control loop
-  if (!motion) { status_ = "no motion"; return; }
   if (!motor) { status_ = "no motor"; return; }
 
-  float fwd = motion->fwd * motion->maxSpeed;
+  float fwd = motion.fwd * motion.maxSpeed;
 
   fwdSpeed_ = mstate.velocity;
   bool balanceModeSpeed = true; //TODO make this adjustable

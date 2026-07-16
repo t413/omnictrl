@@ -3,6 +3,7 @@
 #include "rfprotocol.h"
 #include "displayhandler.h"
 #include "behavior.h"
+#include <peers.h>
 #include <WString.h>
 #include <MadgwickAHRS.h>
 
@@ -17,12 +18,9 @@ class Controller {
   DriveManager* driveManager_ = nullptr;
   DynamicsBase* dynamics_ = nullptr;
   behavior::Manager behaviors_;
+  PeerMgr peerMgr_;
 
   AlfredoCRSF* crsf_ = nullptr;
-  MotionControl lastEspNowCmd_;
-  MotionControl lastCrsfCmd_;
-  MotionControl* activeTx_ = nullptr; //who's in control
-  uint8_t remoteMac_[6] = {0};
   bool enabled_ = false;
   Madgwick imuFilt_;
   float gyroScale_ = 1.0;
@@ -47,14 +45,16 @@ public:
   void loop();
   void disable();
 
-  bool isLinkUp(uint32_t) const;
+  uint8_t findPeer(const uint8_t* mac, bool allownew);
+  uint8_t delegatePeer(const Peer* old, uint32_t now); //switch to secondary controll, if possible
+
+  uint8_t getLinkUpCount(uint32_t now, uint32_t threshold = 1000) const;
   MotionControl getCrsfCtrl(uint32_t now) const;
   uint8_t getValidDriveCount() const;
   void resetPids();
   static bool quaternionToRotationMatrix(const float q[4], float r[3][3]);
   Madgwick* getImuFilter() { return &imuFilt_; }
-  MotionControl* getActiveTx() { return activeTx_; }
-  bool isCrsfActive() const { return activeTx_ == &lastCrsfCmd_; }
+  bool isCrsfActive() const;
   AlfredoCRSF* getCrsf() { return crsf_; }
   bool getEnabled() const { return enabled_; }
   Telem* getTelem() { return &telem_; }
@@ -64,8 +64,9 @@ public:
   behavior::Manager& getBehaviorMgr() { return behaviors_; }
   behavior::Control getControl(uint32_t now);
 
-
+  void send(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0, Peer const* peer = nullptr);
   void handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len);
+
   void drawLCD(const uint32_t);
   bool updateIMU();
   const String version_;

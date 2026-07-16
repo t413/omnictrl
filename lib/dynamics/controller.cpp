@@ -15,6 +15,7 @@
 #include <WiFi.h>
 
 constexpr uint32_t IMU_UPDATE_PERIOD = 20; //ms
+const uint8_t BROADCAST_ADDRESS[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
 bool canPrint() {
   #if ARDUINO_USB_CDC_ON_BOOT
@@ -22,12 +23,6 @@ bool canPrint() {
   #else
   return true;
   #endif
-}
-
-bool validMac(const uint8_t* mac) {
-  for (int i = 0; i < 6; i++)
-    if (mac[i] != 0) return true;
-  return false;
 }
 
 // -------------------- //
@@ -104,9 +99,21 @@ void Controller::setup(DynamicsBase* dynamics, DriveManager* mgr, AlfredoCRSF* c
   delay(100);
 }
 
-bool Controller::isLinkUp(uint32_t now) const {
-  return (crsf_ && crsf_->isLinkUp()) || ((now - lastEspNowCmd_.timestamp) < 500);
+uint8_t Controller::getLinkUpCount(uint32_t now, uint32_t threshold) const {
+  uint8_t ret = 0;
+  for (uint8_t i = 0; i < PEERS_MAX; i++) {
+    auto& peer = peerMgr_.peers_[i];
+    if (peer.isValid() && peer.isRecent(now, threshold))
+      ret++;
+  }
+  return ret;
 }
+
+bool Controller::isCrsfActive() const {
+  return crsf_ && (peerMgr_.activePeer_ == PEER_CRSF) && crsf_->isLinkUp();
+}
+
+
 
 MotionControl Controller::getCrsfCtrl(uint32_t now) const {
   MotionControl ret = {};
@@ -151,7 +158,38 @@ uint8_t Controller::getDriveCount() const {
 }
 
 behavior::Control Controller::getControl(uint32_t now) {
-  return behaviors_.iterate(now, (activeTx_? *activeTx_ : MotionControl()), dynamics_->isBalancing(), behaviors_);
+  auto pidx = peerMgr_.getActiveIdx();
+  auto p = peerMgr_.findPeer(pidx);
+  return behaviors_.iterate(now, (p? p->lastCmd_ : MotionControl()), dynamics_->isBalancing(), behaviors_);
+}
+
+uint8_t Controller::findPeer(const uint8_t* mac, bool allownew) {
+  auto peeridx = peerMgr_.findPeerIdx(mac);
+  // Serial.printf("MC: a%d fwd %06.2f yaw %06.2f side %06.2f\n", rxmc.state, rxmc.fwd, rxmc.yaw, rxmc.side);
+  if ((peeridx >= PEERS_MAX) && allownew) { //new peer!
+    peeridx = peerMgr_.newPeer(mac);
+    D_LOG("New peer %02x:%02x:%02x:%02x:%02x:%02x -> %p", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], peeridx);
+    if (peeridx >= PEERS_MAX) return peeridx;
+    // Register peer
+    esp_now_peer_info_t newpeer = {0};
+    memcpy(newpeer.peer_addr, mac, 6);
+    newpeer.channel = 0;
+    newpeer.encrypt = false;
+    auto res = esp_now_add_peer(&newpeer);
+    if (res != ESP_OK && canPrint())
+      D_LOG("ESP-NOW add peer failed: %d", res);
+  }
+  return peeridx;
+}
+
+uint8_t Controller::delegatePeer(const Peer* old, uint32_t now) {
+  for (uint8_t i = 0; i < PEERS_MAX; i++) {
+    auto& peer = peerMgr_.peers_[i];
+    if (old && &peer == old) continue;
+    if (peer.isValid() && peer.isRecent(now) && peer.lastCmd_.state > 0)
+      return i;
+  }
+  return PEERS_MAX;
 }
 
 void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_t inlen) {
@@ -161,37 +199,38 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_
     return printBuf(inbuf, inlen);
   }
   auto cmd = (Cmds)pkt.type;
+  auto peeridx = findPeer(mac, true);
+  auto peer = peerMgr_.findPeer(peeridx);
+  if (!peer) {
+    D_LOG("handleRx no peer");
+    return;
+  }
+
   if (cmd == Cmds::MotionControl && pkt.payloadLen == MOTION_CONTROL_SIZE) {
     MotionControl rxmc = *((const MotionControl*) pkt.payload);
     rxmc.timestamp = millis();
-    // Serial.printf("MC: a%d fwd %06.2f yaw %06.2f side %06.2f\n", rxmc.state, rxmc.fwd, rxmc.yaw, rxmc.side);
-    if (rxmc.state > 0 && lastEspNowCmd_.state == 0) {
-      D_LOG("ESPNow arm");
-      activeTx_ = &lastEspNowCmd_; //take control
-    }
-    lastEspNowCmd_ = rxmc;
 
-    if (memcmp(mac, remoteMac_, 6) != 0) {
-      if (canPrint())
-        D_LOG("New telemetry target: %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-      memcpy(remoteMac_, mac, 6);
-      // Register peer
-      esp_now_peer_info_t newpeer = {0};
-      memcpy(newpeer.peer_addr, remoteMac_, 6);
-      newpeer.channel = 0;
-      newpeer.encrypt = false;
-      auto res = esp_now_add_peer(&newpeer);
-      if (res != ESP_OK && canPrint())
-        D_LOG("ESP-NOW add peer failed: %d", res);
+    if (rxmc.state > 0 && peer->lastCmd_.state == 0) {
+      peerMgr_.activate(peeridx);
+      D_LOG("ESPNow arm peer[%d]", peeridx);
     }
+    peer->lastCmd_ = rxmc;
+
   } else if (cmd == Cmds::Ping) {
+    peer->lastPing_ = millis();
     // Reply to ping with our MAC address
-    uint8_t txBuf[comms::HEADER_OVERHEAD + 8] = {0};
-    uint8_t txLen = comms::NowPacket::serialise((uint8_t)Cmds::PingReply, 0, nullptr, 0, txBuf, sizeof(txBuf));
-    if (txLen > 0) { esp_now_send(mac, txBuf, txLen); }
-    D_LOG("Ping received, replying to %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    send(Cmds::PingReply, nullptr, 0, peer);
+    D_LOG("Ping received from peer[%d], replied", peeridx);
   } else if (cmd == Cmds::ModeChange) {
     behaviors_.increment();
+  }
+}
+
+void Controller::send(Cmds cmd, const uint8_t* pyld, uint8_t len, Peer const* peer) {
+  uint8_t txBuf[comms::HEADER_OVERHEAD + len] = {0};
+  uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, 0, pyld, len, txBuf, sizeof(txBuf));
+  if (txLen > 0) {
+    auto result = esp_now_send(peer? peer->mac : BROADCAST_ADDRESS, txBuf, txLen);
   }
 }
 
@@ -252,12 +291,16 @@ void Controller::loop() {
     }
     telem_.timestamp = latest;
 
-    // Send telemetry to remote
-    if (validMac(remoteMac_)) {
-      uint8_t txBuf[comms::HEADER_OVERHEAD + sizeof(Telem) + 4] = {0};
-      uint8_t txLen = comms::NowPacket::serialise((uint8_t)Cmds::Telemetry, 0, (uint8_t*)&telem_, sizeof(Telem), txBuf, sizeof(txBuf));
-      if (txLen > 0) { esp_now_send(remoteMac_, txBuf, txLen); }
+    // Send telemetry to valid recent remotes
+    #if 1
+    for (uint8_t i = PEER_CRSF + 1; i < PEERS_MAX; i++) {
+      auto& peer = peerMgr_.peers_[i];
+      if (! peer.isValid() || ! peer.isRecent(now, 1000)) continue;
+      send(Cmds::Telemetry, (uint8_t*)&telem_, sizeof(Telem), &peer);
     }
+    #else
+    send(Cmds::Telemetry, (uint8_t*)&telem_, sizeof(Telem)); //broadcast telem
+    #endif
 
     lastPollStats = now;
     // Serial.println("MAC: " + WiFi.macAddress());
@@ -299,24 +342,31 @@ void Controller::loop() {
 
     //control inputs
     bool arm = enabled_;
-    // --- CRSF Rx --- //
 
+
+    // --- CRSF Rx --- //
     auto newctrl = getCrsfCtrl(now);
-    if (newctrl.state && lastCrsfCmd_.state == 0) {
-      activeTx_ = &lastCrsfCmd_; //take control
+    auto& cpeer = peerMgr_.peers_[PEER_CRSF];
+    if (newctrl.state && cpeer.lastCmd_.state == 0) {
+      peerMgr_.activate(PEER_CRSF); //take control
       D_LOG("CRSF arm");
     }
-    lastCrsfCmd_ = newctrl;
-    bool stale = activeTx_ && ((int32_t)(now - activeTx_->timestamp) > 1000);
+    cpeer.lastCmd_ = newctrl;
 
-    if (activeTx_ && (!activeTx_->state || stale)) { //disarmed active ctrl or disconnected
-      MotionControl* otherCtrl = (activeTx_ == &lastCrsfCmd_) ? &lastEspNowCmd_ : &lastCrsfCmd_;
-      if (otherCtrl->state > 0) { //delegate
-        activeTx_ = otherCtrl;
-        D_LOG("Delegating to %s, stale %d", (activeTx_ == &lastCrsfCmd_)? "CRSF" : "ESP-NOW", stale);
+
+    auto aidx = peerMgr_.getActiveIdx();
+    auto active = peerMgr_.findPeer(aidx);
+    bool stale = !active || !active->isRecent(now, 1000);
+
+    if (active && (!active->lastCmd_.state || stale)) { //disarmed active ctrl or disconnected
+      aidx = delegatePeer(active, now);
+      peerMgr_.activate(aidx);
+      active = peerMgr_.findPeer(aidx);
+      if (active) {
+        D_LOG("Delegated to [%d], stale %d", aidx, stale);
       } else {
-        D_LOG("Disarming, no active control, stale %d dt %ld", stale, now - activeTx_->timestamp);
-        activeTx_ = nullptr; //disarm
+        D_LOG("Disarming, no active control");
+        disable();
       }
     }
 
@@ -324,18 +374,18 @@ void Controller::loop() {
       const auto chan8 = crsf_? crsf_->getChannel(8) : 0;
       bool enableAdjustment = arm && crsf_ && (chan8 > 1900);
       if (enableAdjustment && tunable) {
-        *tunable = pow(10, mapfloat(activeTx_->adjust, 0, 1, -2, 2));
-        if (activeTx_->adjust < 0.01) *tunable = 0; //allow 0 values
+        *tunable = pow(10, mapfloat(active->lastCmd_.adjust, 0, 1, -2, 2));
+        if (active->lastCmd_.adjust < 0.01) *tunable = 0; //allow 0 values
       } else if (chan8 > 1500 && chan8 < 1900 && lastchan8_ < 1500) { //behavior bump
         behaviors_.increment();
       } else if (chan8 < 1100) {
         behaviors_.clear();
       }
       lastchan8_ = chan8;
-    } else if (activeTx_ == &lastEspNowCmd_) {
-      lastEspNowCmd_.maxSpeed = 18;
+    } else if (active) {
+      active->lastCmd_.maxSpeed = 18;
     }
-    arm = activeTx_ && (activeTx_->state > 0);
+    arm = active && (active->lastCmd_.state > 0);
     if ((arm != enabled_)) {
       // -- ENABLING, arming, whatever -- //
       display_.requestRedraw();
@@ -381,17 +431,19 @@ void Controller::drawLCD(const uint32_t now) {
   auto fg = BLACK;
   auto pageBG = BLACK;
   auto validCount = getValidDriveCount();
+  auto linkCount = getLinkUpCount(now);
   String title = dynamics_? dynamics_->getStatus() : "?";
   String err;
   if (telem_.vbus > 0.1 && telem_.vbus < lowVoltageCutoff_) err = "low batt!";
   else if (!validCount) err = "no drives!";
-  else if (!isLinkUp(now)) err = "NO LINK";
+  else if (!linkCount) err = "NO LINK";
   if (!err.isEmpty()) {
     title = err;
     fg = WHITE;
     pageBG = SUPERDARKRED;
     bgRainbow = RED;
   }
+  if (linkCount > 1) title = str("%d links", linkCount);
 
   display_.setFont(&FreeSansBold12pt7b);
   display_.drawBorder(bgRainbow);

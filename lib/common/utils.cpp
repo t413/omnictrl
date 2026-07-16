@@ -41,7 +41,7 @@ String str(bool v) {
 }
 
 void printBuf(const uint8_t* buf, uint8_t len, HardwareSerial* port) {
-  if (!port) port = &Serial0;
+  if (!port) port = (HardwareSerial*)&Serial;
   if (port && *port && port->availableForWrite() > 0) {
     port->printf("RX: {");
     for (int i = 0; i < len; i++)
