@@ -18,6 +18,7 @@ class RCRemote {
   bool armed_ = false;
   uint32_t lastWasMoved_ = 0;
   bool powerSaveMode_ = false;
+  bool joystickSetup_ = false;
   bool lastJoyBtn_ = false;
   uint32_t lastJoyBtnChange_ = 0;
   uint32_t lastPoll_ = 0;
@@ -40,8 +41,10 @@ public:
   ~RCRemote();
 
   void setup();
+  void setupJoystick(uint16_t maxtries = 10);
   void loop();
 
+  void pollJoystick(uint32_t now);
   void setArmState(bool arm);
   void handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len);
   void drawLCD(const uint32_t);

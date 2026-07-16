@@ -40,14 +40,6 @@ void RCRemote::setup() {
   Serial.setTimeout(10); //very fast, need to keep the ctrl loop running
   D_LOG("RCRemote setup");
   Serial.flush();
-  delay(100);
-
-  D_LOG("setting up joystick");
-  auto jres = joy_.begin(&Wire, JOYSTICK2_ADDR, I2S_SDA, I2S_SCL);
-  if (jres) {
-    joy_.get_joy_adc_16bits_value_xy(&joyCenterX_, &joyCenterY_);
-    D_LOG("joystick center %d %d", joyCenterX_, joyCenterY_);
-  } else D_LOG("JoyC init failed: %d", jres);
 
   D_LOG("setting up wifi");
   WiFi.mode(WIFI_STA);
@@ -84,6 +76,7 @@ void RCRemote::setup() {
 
   delay(100);
   D_LOG("Ready. Version %s", version_.c_str());
+  setupJoystick(2);
 }
 
 
@@ -158,6 +151,80 @@ void RCRemote::send(Cmds cmd, const uint8_t* pyld, uint8_t len, bool broadcast) 
   }
 }
 
+void RCRemote::setupJoystick(uint16_t maxtries) {
+  if (joystickSetup_) return;
+  D_LOG("setting up joystick");
+  uint16_t fails = 0;
+  while (!joy_.begin(&Wire, JOYSTICK2_ADDR, I2S_SDA, I2S_SCL)) {
+    D_LOG("JoyC init failed: %d", fails++);
+    if (fails > maxtries) return;
+    delay(10);
+  }
+  joy_.get_joy_adc_16bits_value_xy(&joyCenterX_, &joyCenterY_);
+  D_LOG("joystick center %d %d", joyCenterX_, joyCenterY_);
+  joystickSetup_ = true;
+}
+
+void RCRemote::pollJoystick(uint32_t now) {
+  if (!joystickSetup_) return;
+  uint16_t x = 0, y = 0;
+  joy_.get_joy_adc_16bits_value_xy(&x, &y);
+  if (x == 0 && y == 0) { D_LOG("dis val"); return; } //no reading
+  if (x == 257 && y == 257) { D_LOG("dis val2"); return; } //error reading
+  bool joybtn = !joy_.get_button_value();
+  uint32_t dbtnt = (now - lastJoyBtnChange_);
+  if (lastJoyBtn_ != joybtn) {
+    lastWasMoved_ = now;
+    if (!joybtn && dbtnt < BTN_SHORTPRESS_MAX) { //short press
+      if (powerSaveMode_) {
+        //nothing! wake up
+      } else if (armed_) {
+        send(Cmds::ModeChange);
+      } else {
+        setArmState(true);
+      }
+    }
+    lastJoyBtnChange_ = now;
+  }
+  lastJoyBtn_ = joybtn;
+  MotionControl mc;
+  mc.state = armed_? 1 : 0;
+  float deadband_ = 0.05;
+  float expo_ = 1.5;
+  mc.yaw   = expo(deadband( (x - joyCenterX_) / 65500.0 * 2, deadband_), expo_);
+  mc.fwd   = expo(deadband(-(y - joyCenterY_) / 65500.0 * 2, deadband_), expo_);
+  if (joybtn) { //when joystick is held down, control side
+    mc.side = mc.yaw;
+    mc.yaw = 0;
+  }
+  mc.side = constrain(mc.side, -1.0, 1.0);
+  mc.timestamp = now;
+  //check for major discontinuity
+  if (abs(mc.yaw - lastMotion_.yaw) > 1.0 || abs(mc.fwd - lastMotion_.fwd) > 1.0) {
+    D_LOG("Discontinuity: [%d,%d]", x, y);
+  } else {
+    //apply smoothing
+    float alpha = 0.3f; //0.3 is good for 25Hz, 0.2 for 50Hz
+    mc.fwd = alpha * lastMotion_.fwd + (1.0f - alpha) * mc.fwd;
+    mc.yaw = alpha * lastMotion_.yaw + (1.0f - alpha) * mc.yaw;
+    mc.side = alpha * lastMotion_.side + (1.0f - alpha) * mc.side;
+
+    //send it to selected rover
+    send(Cmds::MotionControl, (uint8_t*)&mc, sizeof(MotionControl));
+  }
+  lastMotion_ = mc;
+
+  D_LOG("xy: [%d,%d] -> f,y,s: [%4.2f,%4.2f,%4.2f] -> %s",
+    x, y, lastMotion_.fwd, lastMotion_.yaw, lastMotion_.side,
+    lastSentFail_? "fail" : "ok"
+  );
+
+  //show red when armed, dark purple when not
+  joy_.set_rgb_color(armed_? 0xFF0000 : 0x100010);
+  if (abs(lastMotion_.fwd) > 0.1 || abs(lastMotion_.yaw) > 0.1)
+    lastWasMoved_ = now;
+}
+
 void RCRemote::loop() {
   uint32_t now = millis();
 
@@ -187,57 +254,13 @@ void RCRemote::loop() {
     lastPing_ = now;
   }
 
-  if ((now - lastPoll_) > (armed_? 25 : 200)) {
+  if ((now - lastPoll_) > ((!armed_ || powerSaveMode_)? 200 : 25)) {
 
-    uint16_t x = 0, y = 0;
-    joy_.get_joy_adc_16bits_value_xy(&x, &y);
-    if (x == 0 && y == 0) { D_LOG("dis val"); return; } //no reading
-    if (x == 257 && y == 257) { D_LOG("dis val2"); return; } //error reading
-    bool joybtn = !joy_.get_button_value();
-    uint32_t dbtnt = (now - lastJoyBtnChange_);
-    if (lastJoyBtn_ != joybtn) {
-      if (!joybtn && dbtnt < BTN_SHORTPRESS_MAX) { //short press
-        send(Cmds::ModeChange);
-      }
-      lastJoyBtnChange_ = now;
-    }
-    lastJoyBtn_ = joybtn;
-    MotionControl mc;
-    mc.state = armed_? 1 : 0;
-    float deadband_ = 0.05;
-    float expo_ = 1.5;
-    mc.yaw   = expo(deadband( (x - joyCenterX_) / 65500.0 * 2, deadband_), expo_);
-    mc.fwd   = expo(deadband(-(y - joyCenterY_) / 65500.0 * 2, deadband_), expo_);
-    if (joybtn) { //when joystick is held down, control side
-      mc.side = mc.yaw;
-      mc.yaw = 0;
-    }
-    mc.side = constrain(mc.side, -1.0, 1.0);
-    mc.timestamp = now;
-    //check for major discontinuity
-    if (abs(mc.yaw - lastMotion_.yaw) > 1.0 || abs(mc.fwd - lastMotion_.fwd) > 1.0) {
-      D_LOG("Discontinuity: [%d,%d]", x, y);
+    if (joystickSetup_) {
+      pollJoystick(now);
     } else {
-      //apply smoothing
-      float alpha = 0.3f; //0.3 is good for 25Hz, 0.2 for 50Hz
-      mc.fwd = alpha * lastMotion_.fwd + (1.0f - alpha) * mc.fwd;
-      mc.yaw = alpha * lastMotion_.yaw + (1.0f - alpha) * mc.yaw;
-      mc.side = alpha * lastMotion_.side + (1.0f - alpha) * mc.side;
-
-      //send it to selected rover
-      send(Cmds::MotionControl, (uint8_t*)&mc, sizeof(MotionControl));
+      setupJoystick();
     }
-    lastMotion_ = mc;
-
-    D_LOG("xy: [%d,%d] -> f,y,p,r: [%.2f,%.2f,\t%.2f] -> %s",
-      x, y, lastMotion_.fwd, lastMotion_.yaw, lastMotion_.side,
-      lastSentFail_? "fail" : "ok"
-    );
-
-    //show red when armed, dark purple when not
-    joy_.set_rgb_color(armed_? 0xFF0000 : 0x100010);
-    if (armed_ || abs(lastMotion_.fwd) > 0.1 || abs(lastMotion_.yaw) > 0.1)
-      lastWasMoved_ = now;
     lastPoll_ = now;
   }
 
@@ -288,8 +311,10 @@ void RCRemote::drawLCD(const uint32_t now) {
   //draw lastMotion_
   lcd->setTextColor(bgRainbow, pageBG);
   lcd->setFont(&FreeMono12pt7b);
-  display_.drawCentered(("f" + String(lastMotion_.fwd  )).c_str(), pageBG);
-  display_.drawCentered(("y" + String(lastMotion_.yaw  )).c_str(), pageBG);
+  if (joystickSetup_) {
+    display_.drawCentered(("f" + String(lastMotion_.fwd  )).c_str(), pageBG);
+    display_.drawCentered(("y" + String(lastMotion_.yaw  )).c_str(), pageBG);
+  } else { display_.drawCentered("no joy", pageBG); }
 
   // Draw telemetry using the common function
   if ((now - lastTelemetry_.timestamp) < 1000) {
