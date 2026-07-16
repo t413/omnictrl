@@ -78,11 +78,6 @@ void RCRemote::setup() {
     display_.setLCD(&M5.Lcd);
   }
   M5.Power.begin();
-  if (M5.Imu.isEnabled()) {
-    M5.Imu.loadOffsetFromNVS();
-    // M5.Imu.setAxisOrderRightHanded( ??
-    imuFilt_.setFrequency(50); //50Hz, 20ms
-  }
 #endif
 
   D_LOG("finished setup");
@@ -164,11 +159,8 @@ void RCRemote::loop() {
     setArmState(!armed_);
     display_.requestRedraw();
   }
-  if (M5.BtnB.wasPressed()) { //left side button, toggle IMU control
+  if (M5.BtnB.wasPressed()) { //left side button
     lastWasMoved_ = now;
-    pitchRollOutEn_ = !pitchRollOutEn_;
-    if (pitchRollOutEn_)
-      imuFilt_ = Madgwick(0.2, 50); //resets
     display_.requestRedraw();
   }
   if (M5.BtnPWR.wasPressed()) { //right side button, switch between rovers
@@ -191,7 +183,6 @@ void RCRemote::loop() {
   }
 
   if ((now - lastPoll_) > ((armed_ || !powerSaveMode_)? 25 : 200)) {
-    updateIMU();
 
     uint16_t x = 0, y = 0;
     joy_.get_joy_adc_16bits_value_xy(&x, &y);
@@ -206,14 +197,11 @@ void RCRemote::loop() {
     float expo_ = 1.5;
     mc.yaw   = expo(deadband( (x - joyCenterX_) / 65500.0 * 2, deadband_), expo_);
     mc.fwd   = expo(deadband(-(y - joyCenterY_) / 65500.0 * 2, deadband_), expo_);
-    if (pitchRollOutEn_) { //use imu roll for side control
-      mc.side = expo(deadband(imuFilt_.getRollDegree(), 10.0) / 20.0, expo_ * 2);
-    } else if (joybtn) { //when joystick is held down, control side
+    if (joybtn) { //when joystick is held down, control side
       mc.side = mc.yaw;
       mc.yaw = 0;
     }
     mc.side = constrain(mc.side, -1.0, 1.0);
-    // mc.roll  = pitchRollOutEn_? expo(deadband(imuFilt_.getRollDegree()  / 2.0, 1.0), expo_) : 0;
     mc.timestamp = now;
     //check for major discontinuity
     if (abs(mc.yaw - lastMotion_.yaw) > 1.0 || abs(mc.fwd - lastMotion_.fwd) > 1.0) {
@@ -268,16 +256,6 @@ void RCRemote::loop() {
 
 }
 
-bool RCRemote::updateIMU() {
-#ifdef IS_M5
-  auto res = M5.Imu.isEnabled()? M5.Imu.update() : 0;
-  if (!res) return false;
-  auto data = M5.Imu.getImuData(); //no mag data it seems, sadly
-  imuFilt_.updateIMU<0,'D'>(data.gyro.y * 2.0, data.gyro.x * 2.0, -data.gyro.z / 2.0, -data.accel.y, -data.accel.x, data.accel.z); //acc x/y are swapped
-#endif
-  return true;
-}
-
 void RCRemote::drawLCD(const uint32_t now) {
   auto lcd = display_.getLCD();
   if (!lcd) return;
@@ -306,8 +284,6 @@ void RCRemote::drawLCD(const uint32_t now) {
   lcd->setFont(&FreeMono12pt7b);
   display_.drawCentered(("f" + String(lastMotion_.fwd  )).c_str(), pageBG);
   display_.drawCentered(("y" + String(lastMotion_.yaw  )).c_str(), pageBG);
-  if (pitchRollOutEn_)
-    display_.drawCentered(("s" + String(lastMotion_.side  )).c_str(), pageBG);
 
   // Draw telemetry using the common function
   if ((now - lastTelemetry_.timestamp) < 1000) {

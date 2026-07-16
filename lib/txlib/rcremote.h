@@ -12,13 +12,11 @@ namespace lgfx { inline namespace v1 { class LGFX_Device; } }
 class RCRemote {
   esp_now_peer_info_t peerInfo_;
   M5UnitJoystick2 joy_;
-  Madgwick imuFilt_;
   DisplayHandler display_;
   bool armed_ = false;
   uint32_t lastWasMoved_ = 0;
   bool powerSaveMode_ = false;
   bool lastBtn_ = false;
-  bool pitchRollOutEn_ = false;
   uint32_t lastPoll_ = 0;
   uint32_t lastDraw_ = 0;
   MotionControl lastMotion_;
