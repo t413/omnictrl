@@ -17,6 +17,7 @@
 constexpr uint32_t IMU_UPDATE_PERIOD = 20; //ms
 const uint8_t* PEER_CRSF_MAC = BROADCAST_ADDRESS;
 
+constexpr uint8_t PKT_SUBT = (uint8_t) Subt::Robot;
 
 bool canPrint() {
   #if ARDUINO_USB_CDC_ON_BOOT
@@ -218,10 +219,21 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_
 
 void Controller::send(Cmds cmd, CPeer const* peer, const uint8_t* pyld, uint8_t len) {
   uint8_t txBuf[comms::HEADER_OVERHEAD + len] = {0};
-  uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, 0, pyld, len, txBuf, sizeof(txBuf));
+  uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, PKT_SUBT, pyld, len, txBuf, sizeof(txBuf));
   if (txLen > 0 && peer) {
     auto result = esp_now_send(peer->mac, txBuf, txLen);
   } else D_LOG("tx can't send %p %d", peer, txLen);
+}
+
+void Controller::broadcast(Cmds cmd, const uint8_t* pyld, uint8_t len) {
+  uint8_t txBuf[comms::HEADER_OVERHEAD + len] = {0};
+  uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, PKT_SUBT, pyld, len, txBuf, sizeof(txBuf));
+  if (txLen == 0) { D_LOG("txlen 0"); return; }
+  auto result = esp_now_send(BROADCAST_ADDRESS, txBuf, txLen);
+}
+
+void Controller::sendInfoStr(String s) {
+  broadcast(Cmds::InfoStr, (const uint8_t*) s.c_str(), s.length());
 }
 
 void Controller::disable() {
@@ -282,42 +294,45 @@ void Controller::loop() {
     }
     telem_.timestamp = latest;
 
-    // Send telemetry to valid recent remotes
-    #if 1
-    auto cidx = peerMgr_.findPeerIdx(PEER_CRSF_MAC);
-    for (uint8_t i = 0; i < PEERS_MAX; i++) {
-      auto& peer = peerMgr_.peers_[i];
-      if (i != cidx && peer.isValid() && peer.isRecent(now, 1000))
-        send(Cmds::Telemetry, &peer, (uint8_t*)&telem_, sizeof(Telem));
-    }
-    #else
-    send(Cmds::Telemetry, (uint8_t*)&telem_, sizeof(Telem)); //broadcast telem
-    #endif
+    // broadcast telemetry
+    broadcast(Cmds::Telemetry, (uint8_t*)&telem_, sizeof(Telem));
 
     lastPollStats = now;
     // Serial.println("MAC: " + WiFi.macAddress());
   }
-  if (((now - lastTxStats) > 100) && crsf_ && crsf_->isLinkUp()) {
-    crsf_sensor_battery_t crsfBatt = {
-      .voltage = htobe16((uint16_t)(telem_.vbus * 10.0)),
-      .current = htobe16((uint16_t)(0 * 10.0)),
-      .capacity = (uint16_t)(htobe16((uint16_t)(0)) << 8),
-      .remaining = (uint8_t)(0),
-    };
-    crsf_->queuePacket(CRSF_SYNC_BYTE, CRSF_FRAMETYPE_BATTERY_SENSOR, &crsfBatt, sizeof(crsfBatt));
-    auto name = behaviors_.getName();
-    crsf_->queuePacket(CRSF_SYNC_BYTE, 0x21, name, strlen(name) + 1);
+  if (((now - lastTxStats) > 100)) {
+    if (crsf_ && crsf_->isLinkUp()) {
+      crsf_sensor_battery_t crsfBatt = {
+        .voltage = htobe16((uint16_t)(telem_.vbus * 10.0)),
+        .current = htobe16((uint16_t)(0 * 10.0)),
+        .capacity = (uint16_t)(htobe16((uint16_t)(0)) << 8),
+        .remaining = (uint8_t)(0),
+      };
+      crsf_->queuePacket(CRSF_SYNC_BYTE, CRSF_FRAMETYPE_BATTERY_SENSOR, &crsfBatt, sizeof(crsfBatt));
+      auto name = behaviors_.getName();
+      crsf_->queuePacket(CRSF_SYNC_BYTE, 0x21, name, strlen(name) + 1); //CRSF_FRAMETYPE_FLIGHT_MODE
+    }
+
+    if (lastBehaviorIdx_ != behaviors_.activeIdx_) {
+      sendInfoStr(String("m: ") + behaviors_.getName());
+      D_LOG("mode change %s", behaviors_.getName());
+      lastBehaviorIdx_ = behaviors_.activeIdx_;
+    }
+
     lastTxStats = now;
   }
 
   #ifdef IS_M5
   M5.update(); //updates buttons, etc
-  if (M5.BtnA.wasPressed()) {
+  if (M5.BtnA.wasSingleClicked()) {
+    if (enabled_) behaviors_.increment();
+    else selectedTune_ = MAX_ADJUSTABLES; //clear
+  } else if (M5.BtnA.wasDoubleClicked()) {
     selectedTune_ = (selectedTune_ + 1) % (MAX_ADJUSTABLES + 1); //+1 for disabled
     if (selectedTune_ < MAX_ADJUSTABLES) {
-      strncpy(telem_.adjustSrc, adjNames_[selectedTune_].c_str(), sizeof(telem_.adjustSrc) - 1);
+      sendInfoStr("adj:" + adjNames_[selectedTune_]);
     } else {
-      telem_.adjustSrc[0] = '\0';
+      sendInfoStr("adj-none");
     }
     display_.requestRedraw();
   }
@@ -396,7 +411,6 @@ void Controller::loop() {
   } //IMU timing
 
   if ((now - lastDraw) > 60 || display_.isRedrawRequired()) {
-    telem_.adjusting = tunable? *tunable : 0.0;
     drawLCD(now);
     lastDraw = now;
   }

@@ -11,12 +11,12 @@ namespace comms {
     // Wire layout: [type:u8][chan:u8][payload...]
     struct NowPacket {
         uint8_t type = 0;
-        uint8_t chan = 0;  // 1-based channel number; 0 for beacons
+        uint8_t subt = 0;
         uint8_t payloadLen = 0;
         uint8_t* payload = nullptr;
         uint8_t mac[6] = {0}; //not transmitted; set by receiver for peer tracking
 
-        static uint8_t serialise(uint8_t, uint8_t chan, const uint8_t* payload, uint8_t len, uint8_t* dst, uint8_t destmax);
+        static uint8_t serialise(uint8_t, uint8_t subt, const uint8_t* payload, uint8_t len, uint8_t* dst, uint8_t destmax);
         bool parse(const uint8_t* src, uint8_t len);
         static uint8_t checksum(const uint8_t* buf, uint16_t len, uint8_t startval = 0);
     };

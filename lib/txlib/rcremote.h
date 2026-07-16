@@ -32,6 +32,7 @@ class RCRemote {
   uint16_t sendFails_ = 0;
   uint16_t joyCenterX_ = 0, joyCenterY_ = 0;
   uint32_t lastPing_ = 0;
+  String infoDisp_;
   float isChargingFilt_ = 0;
   bool isCharging_ = false;
 

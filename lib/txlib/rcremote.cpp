@@ -9,8 +9,7 @@
 #endif
 #include <WiFi.h>
 
-#define POS_X 0
-#define POS_Y 1
+constexpr uint8_t PKT_SUBT = (uint8_t) Subt::Controller;
 
 #ifdef ESP32S3
 constexpr int I2S_SDA = 9;
@@ -86,7 +85,7 @@ void RCRemote::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_t 
 
   auto cmd = (Cmds)pkt.type;
   TPeer* peer = nullptr;
-  if (cmd == Cmds::Telemetry || cmd == Cmds::PingReply) { //from a rover, not another remote
+  if ((Subt)pkt.subt == Subt::Robot) { //from a rover, not another remote
     auto peeridx = peerMgr_.findOrMakePeer(mac, true, true, true);
     peer = peerMgr_.findPeer(peeridx);
     if (!peer) { D_LOG("handleRx no peer?!"); }
@@ -96,9 +95,11 @@ void RCRemote::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_t 
     auto telem = *((const Telem*) pkt.payload);
     telem.timestamp = millis();
     if (peer) peer->lastCmd_ =telem; //save
-
   } else if (cmd == Cmds::PingReply) {
     D_LOG("Ping reply from %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  } else if (cmd == Cmds::InfoStr && peer) {
+    infoDisp_ = String((char*)pkt.payload, pkt.payloadLen);
+    D_LOG("info: %s", infoDisp_.c_str());
   }
 }
 
@@ -126,16 +127,18 @@ void RCRemote::setArmState(bool arm) {
   if (arm) { //
     for (float f : {lastMotion_.fwd, lastMotion_.side, lastMotion_.yaw}) {
       if (abs(f) > 0.05) {
+        infoDisp_ = "stick err";
         return;
       }
     }
   }
   armed_ = arm;
 }
+// [dug] New peer dc:54:75:cb:ba:d0 -> 0x0
 
 void RCRemote::send(Cmds cmd, const uint8_t* pyld, uint8_t len) {
   uint8_t txBuf[comms::HEADER_OVERHEAD + len] = {0};
-  uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, 0, pyld, len, txBuf, sizeof(txBuf));
+  uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, PKT_SUBT, pyld, len, txBuf, sizeof(txBuf));
   auto peer = peerMgr_.findPeer(peerMgr_.activePeer_);
   if (peer && txLen) {
     auto result = esp_now_send(peer->mac, txBuf, txLen);
@@ -143,7 +146,7 @@ void RCRemote::send(Cmds cmd, const uint8_t* pyld, uint8_t len) {
 }
 void RCRemote::broadcast(Cmds cmd, const uint8_t* pyld, uint8_t len) {
   uint8_t txBuf[comms::HEADER_OVERHEAD + len] = {0};
-  uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, 0, pyld, len, txBuf, sizeof(txBuf));
+  uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, PKT_SUBT, pyld, len, txBuf, sizeof(txBuf));
   if (txLen == 0) { D_LOG("txlen 0"); return; }
   auto result = esp_now_send(BROADCAST_ADDRESS, txBuf, txLen);
 }
@@ -359,6 +362,11 @@ void RCRemote::drawLCD(const uint32_t now) {
     lcd->setTextColor(bgRainbow, pageBG);
     String roverInfo =  " #" + String(peerMgr_.activePeer_ + 1) + "/" + String(validcount);
     display_.drawCentered(roverInfo.c_str(), pageBG);
+  }
+  if (!infoDisp_.isEmpty()) {
+    lcd->setFont(&FreeMono12pt7b);
+    lcd->setTextColor(WHITE, pageBG);
+    display_.drawCentered(infoDisp_.c_str(), pageBG);
   }
 
   display_.drawVersion(version_, pageBG);

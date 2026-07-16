@@ -3,10 +3,10 @@
 
 namespace comms {
 
-    uint8_t NowPacket::serialise(uint8_t t, uint8_t chan, const uint8_t* payload, uint8_t len, uint8_t* dst, uint8_t destmax) {
+    uint8_t NowPacket::serialise(uint8_t t, uint8_t subt, const uint8_t* payload, uint8_t len, uint8_t* dst, uint8_t destmax) {
         if (destmax < HEADER_OVERHEAD + len) return 0;
         dst[0] = t;
-        dst[1] = chan;
+        dst[1] = subt;
         dst[2] = len;
         if (len && payload) memcpy(dst + 3, payload, len);
         dst[HEADER_OVERHEAD + len - 1] = checksum(dst, HEADER_OVERHEAD + len - 1);
@@ -18,7 +18,7 @@ namespace comms {
         uint8_t chk = checksum(src, len - 1);
         if (chk != src[len - 1]) return false; // invalid checksum
         type       = src[0];
-        chan       = src[1];
+        subt       = src[1];
         payloadLen = src[2];
         if (payloadLen) payload = const_cast<uint8_t*>(src + 3);
         return true;

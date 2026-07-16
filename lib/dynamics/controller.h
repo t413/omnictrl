@@ -22,6 +22,7 @@ class Controller {
   DriveManager* driveManager_ = nullptr;
   DynamicsBase* dynamics_ = nullptr;
   behavior::Manager behaviors_;
+  int8_t lastBehaviorIdx_ = -1;
   PeerMgr<MotionControl> peerMgr_;
 
   AlfredoCRSF* crsf_ = nullptr;
@@ -69,6 +70,8 @@ public:
   behavior::Control getControl(uint32_t now);
 
   void send(Cmds cmd, CPeer const* peer, const uint8_t* pyld = nullptr, uint8_t len = 0);
+  void broadcast(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0);
+  void sendInfoStr(String);
   void handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len);
 
   void drawLCD(const uint32_t);
