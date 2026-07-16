@@ -1,6 +1,7 @@
 #pragma once
 
 #include <rfprotocol.h>
+#include <peers.h>
 #include <displayhandler.h>
 #include <WString.h>
 #include <MadgwickAHRS.h>
@@ -11,11 +12,13 @@ namespace lgfx { inline namespace v1 { class LGFX_Device; } }
 
 constexpr uint32_t BTN_SHORTPRESS_MAX = 500;  // milliseconds
 constexpr uint32_t DISPLAY_SLEEP_MS = 5000;
+constexpr uint32_t IDLE_POWEROFF_SLEEP_MS = 20000;
+typedef Peer<Telem> TPeer;
 
 class RCRemote {
-  esp_now_peer_info_t peerInfo_;
   M5UnitJoystick2 joy_;
   DisplayHandler display_;
+  PeerMgr<Telem> peerMgr_;
   bool armed_ = false;
   uint32_t lastWasMoved_ = 0;
   bool powerSaveMode_ = false;
@@ -25,17 +28,10 @@ class RCRemote {
   uint32_t lastPoll_ = 0;
   uint32_t lastDraw_ = 0;
   MotionControl lastMotion_;
-  Telem lastTelemetry_;
-  bool lastSentFail_ = false;
+  float lastSentFailFilt_ = 1.0f;
+  uint16_t sendFails_ = 0;
   uint16_t joyCenterX_ = 0, joyCenterY_ = 0;
-
-  // Rover discovery
-  static const uint8_t maxRovers_ = 8;
-  uint8_t discoveredRovers_[maxRovers_][6] = {0};
-  uint8_t roverCount_ = 0;
-  uint8_t selectedRover_ = 0;
   uint32_t lastPing_ = 0;
-
 
 public:
   RCRemote(String version);
@@ -52,10 +48,8 @@ public:
   bool updateIMU();
   const String version_;
 
-  int findClient(const uint8_t* mac);
-  void addClient(const uint8_t* mac);
-  void setTxDest(const uint8_t* mac);
-  const uint8_t* getClientDest() const;
+  uint8_t nextPeer(uint8_t current, bool allowold);
+  uint8_t validPeerCount() const;
   void send(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0, bool broadcast = false);
 
   void setWakeupPower(bool wakeup);

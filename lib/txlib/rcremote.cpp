@@ -3,6 +3,7 @@
 #include <log.h>
 #include <Arduino.h>
 #include <NowPacket.h>
+#include <esp_task_wdt.h>
 #ifdef IS_M5
 #include <M5Unified.h>
 #endif
@@ -53,16 +54,12 @@ void RCRemote::setup() {
     remote_->handleRxPacket(mac, data, len);
   });
   esp_now_register_send_cb([](const uint8_t *mac, esp_now_send_status_t status) {
-    remote_->lastSentFail_ = (status == ESP_NOW_SEND_FAIL);
+    constexpr float alpha = 0.1;
+    float failv = (status == ESP_NOW_SEND_FAIL)? 1.0f : 0.0f;
+    if (status == ESP_NOW_SEND_FAIL) remote_->sendFails_++;
+    remote_->lastSentFailFilt_ = alpha * failv + (1.0f - alpha) * remote_->lastSentFailFilt_;
   });
-  // Register peer
-  memcpy(peerInfo_.peer_addr, broadcastAddress, 6);
-  peerInfo_.channel = 0;
-  peerInfo_.encrypt = false;
-  res = esp_now_add_peer(&peerInfo_);
-  if (res != ESP_OK)
-    D_LOG("ESP-NOW add peer failed: %d", res);
-
+  espnowRegisterMac(broadcastAddress);
 
 #ifdef IS_M5
   D_LOG("setting up m5");
@@ -90,65 +87,53 @@ void RCRemote::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_t 
   }
 
   auto cmd = (Cmds)pkt.type;
+  TPeer* peer = nullptr;
+  if (cmd == Cmds::Telemetry || cmd == Cmds::PingReply) { //from a rover, not another remote
+    auto peeridx = peerMgr_.findOrMakePeer(mac, true, true, true);
+    peer = peerMgr_.findPeer(peeridx);
+    if (!peer) { D_LOG("handleRx no peer?!"); }
+  }
+  //now actually handle packets
   if (cmd == Cmds::Telemetry && pkt.payloadLen == sizeof(Telem)) {
-    lastTelemetry_ = *((const Telem*) pkt.payload);
-    lastTelemetry_.timestamp = millis();
+    auto telem = *((const Telem*) pkt.payload);
+    telem.timestamp = millis();
+    if (peer) peer->lastCmd_ =telem; //save
+
   } else if (cmd == Cmds::PingReply) {
     D_LOG("Ping reply from %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   }
-  if (findClient(mac) == maxRovers_) {
-    D_LOG("Discovered new rover");
-    addClient(mac); // Add newly discovered rover!
-    setTxDest(getClientDest()); // Update peer info to new target if needed
-  }
 }
 
-int RCRemote::findClient(const uint8_t* mac) {
-  for (int i = 0; i < maxRovers_; i++) {
-    if (memcmp(discoveredRovers_[i], mac, 6) == 0) {
+uint8_t RCRemote::nextPeer(uint8_t old, bool allowold) {
+  for (uint8_t i = 0; i < PEERS_MAX; i++) {
+    auto& peer = peerMgr_.peers_[i];
+    if (old && i == old) continue;
+    if (peer.isValid())
       return i;
-    }
   }
-  return maxRovers_; // Not found
+  return allowold? old : PEERS_MAX;
 }
 
-void RCRemote::addClient(const uint8_t* mac) {
-  const uint8_t idx = roverCount_ % maxRovers_;
-  memcpy(discoveredRovers_[idx], mac, 6);
-  roverCount_++;
-  D_LOG("Discovered rover %d: %02x:%02x:%02x:%02x:%02x:%02x",
-    idx, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  display_.requestRedraw();
-}
-
-void RCRemote::setTxDest(const uint8_t* mac) {
-  // esp_now_del_peer(peerInfo_.peer_addr); // Remove existing peer
-  memcpy(peerInfo_.peer_addr, mac, 6); // Set new destination
-  auto res = esp_now_add_peer(&peerInfo_);
-  if (res != ESP_OK)
-    D_LOG("ESP-NOW switch peer failed: %d", res);
-  D_LOG("Switched to rover %d: %02x:%02x:%02x:%02x:%02x:%02x", selectedRover_, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-}
-
-const uint8_t* RCRemote::getClientDest() const {
-  return (roverCount_ > 0)? discoveredRovers_[selectedRover_] : broadcastAddress;
+uint8_t RCRemote::validPeerCount() const {
+  uint8_t ret = 0;
+  for (uint8_t i = 0; i < PEERS_MAX; i++)
+    if (peerMgr_.peers_[i].isValid())
+      ret++;
+  return ret;
 }
 
 void RCRemote::setArmState(bool arm) {
   if (powerSaveMode_)
     return;
-  if (armed_) { //disarming
-    armed_ = false; //always just disarm
-  } else if (!armed_ && !lastSentFail_) { //arming check
-    armed_ = true;
-  }
+  armed_ = !armed_;
 }
 
 void RCRemote::send(Cmds cmd, const uint8_t* pyld, uint8_t len, bool broadcast) {
   uint8_t txBuf[comms::HEADER_OVERHEAD + len] = {0};
   uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, 0, pyld, len, txBuf, sizeof(txBuf));
   if (txLen > 0) {
-    const uint8_t* target = (!broadcast && roverCount_ > 0)? discoveredRovers_[selectedRover_] : broadcastAddress;
+    auto peer = peerMgr_.findPeer(peerMgr_.activePeer_);
+    const uint8_t* target = (!broadcast && peer && peer->isValid())? peer->mac : broadcastAddress;
     auto result = esp_now_send(target, txBuf, txLen);
   }
 }
@@ -191,6 +176,7 @@ void RCRemote::pollJoystick(uint32_t now) {
   lastJoyBtn_ = joybtn;
   MotionControl mc;
   mc.state = armed_? 1 : 0;
+  mc.adjust = lastMotion_.adjust;
   float deadband_ = 0.05;
   float expo_ = 1.5;
   mc.yaw   = expo(deadband( (x - joyCenterX_) / 65500.0 * 2, deadband_), expo_);
@@ -216,10 +202,7 @@ void RCRemote::pollJoystick(uint32_t now) {
   }
   lastMotion_ = mc;
 
-  D_LOG("xy: [%d,%d] -> f,y,s: [%4.2f,%4.2f,%4.2f] -> %s",
-    x, y, lastMotion_.fwd, lastMotion_.yaw, lastMotion_.side,
-    lastSentFail_? "fail" : "ok"
-  );
+  D_LOG("xy: [%d,%d] -> f,y,s: [%4.2f,%4.2f,%4.2f] -> %0.1f %d", x, y, lastMotion_.fwd, lastMotion_.yaw, lastMotion_.side, 100.0f * lastSentFailFilt_, sendFails_);
 
   //show red when armed, dark purple when not
   joy_.set_rgb_color(armed_? 0xFF0000 : 0x100010);
@@ -230,6 +213,10 @@ void RCRemote::pollJoystick(uint32_t now) {
 void RCRemote::setWakeupPower(bool wakeup) {
   powerSaveMode_ = !wakeup;
   M5.Lcd.setBrightness(wakeup? 200 : 0);
+  // auto pwr = M5.Power.M5pm1;
+  // auto g2m = pwr.setGPIOMode(m5::M5PM1_Class::gpio2, m5::M5PM1_Class::output);
+  // auto g2  = pwr.setGPIOOutput(m5::M5PM1_Class::gpio2, wakeup);
+  // D_LOG("wakeup[%d], g2 %d %d", wakeup, g2m, g2);
   if (!armed_ && joystickSetup_ && powerSaveMode_)
     joy_.set_rgb_color(0); //power off led
 }
@@ -244,16 +231,16 @@ void RCRemote::loop() {
     setArmState(!armed_);
     display_.requestRedraw();
   }
-  if (M5.BtnB.wasPressed()) { //left side button
+  if (M5.BtnB.wasDecideClickCount()) { //left side button released
     lastWasMoved_ = now;
+    bool single = (M5.BtnB.wasSingleClicked());
+    if (armed_) lastMotion_.adjust = fmod(lastMotion_.adjust + (single? 0.2f : -0.2), 1.0f); //bump up/down
+    else peerMgr_.activePeer_ = nextPeer(peerMgr_.activePeer_, true); //change peer
     display_.requestRedraw();
   }
-  if (M5.BtnPWR.wasPressed()) { //right side button, switch between rovers
-    lastWasMoved_ = now;
-    selectedRover_ = roverCount_ > 0? (selectedRover_ + 1) % roverCount_ : 0; //increment / wrap
-    auto newmac = getClientDest();
-    setTxDest(newmac); // Update peer info to new target
-    display_.requestRedraw();
+  if (M5.BtnPWR.wasDecideClickCount()) { //right side button on older targets
+    if (armed_) setArmState(false);
+    else M5.Power.powerOff();
   }
   #endif
 
@@ -273,34 +260,45 @@ void RCRemote::loop() {
     lastPoll_ = now;
   }
 
-  uint32_t sinceMoved = now - lastWasMoved_;
   if ((now - lastDraw_) > 60 || display_.isRedrawRequired()) {
-    if (powerSaveMode_ && sinceMoved < DISPLAY_SLEEP_MS) {
-      setWakeupPower(true); //turn everything back on
-    } else if (!powerSaveMode_ && sinceMoved > DISPLAY_SLEEP_MS) {
-      setWakeupPower(false); //turn of LCD
-    } else if (!armed_ && powerSaveMode_ && (sinceMoved > 2 * 60 * 1000) && !M5.Power.isCharging()) { //2 minutes
-      D_LOG("power off after %dms", sinceMoved);
-      Serial.flush();
-      M5.Power.powerOff();
-    } else {
-      drawLCD(now);
-    }
+    if (!powerSaveMode_) { drawLCD(now); }
     lastDraw_ = now;
   }
 
-  if (powerSaveMode_ && !Serial.isConnected()) {
+  // -- power handling -- //
+
+  #if ARDUINO_USB_CDC_ON_BOOT
+  bool allowLightSleep = !Serial.isConnected();
+  #else
+  bool allowLightSleep = true;
+  #endif
+
+  uint32_t sinceMoved = now - lastWasMoved_;
+  if (!powerSaveMode_ && sinceMoved > DISPLAY_SLEEP_MS) {
+    setWakeupPower(false); //turn of LCD
+  } else if (powerSaveMode_ && sinceMoved < DISPLAY_SLEEP_MS) {
+    setWakeupPower(true); //turn everything back on
+  } else if (!armed_ && powerSaveMode_ && (sinceMoved > IDLE_POWEROFF_SLEEP_MS) && !M5.Power.isCharging()) {
+    D_LOG("power off after %dms", sinceMoved);
+    Serial.flush();
+    delay(100);
+    M5.Power.powerOff();
+  }
+  if (powerSaveMode_ && allowLightSleep) {
     //ESP32 light sleep
     D_LOG("light sleep after %dms", sinceMoved);
     Serial.flush();
-    esp_sleep_enable_timer_wakeup(200 * 1000); //200ms
-    esp_light_sleep_start();
+    M5.Power.lightSleep(100 * 1000); //100ms
+    delay(2);
+    yield();
   }
 }
 
 void RCRemote::drawLCD(const uint32_t now) {
   auto lcd = display_.getLCD();
   if (!lcd) return;
+  auto peer = peerMgr_.findPeer(peerMgr_.activePeer_);
+  auto validcount = validPeerCount();
 
   display_.startFrame();
   auto bgRainbow = display_.timeRainbow(now);
@@ -308,10 +306,10 @@ void RCRemote::drawLCD(const uint32_t now) {
   auto pageBG = BLACK;
 
   String title = armed_? "GO" : "--";
-  if (roverCount_ > 0) {
-    title += " R" + String(selectedRover_ + 1);
+  if (validcount > 0) {
+    title += " R" + String(peerMgr_.activePeer_ + 1);
   }
-  if (lastSentFail_) {
+  if (lastSentFailFilt_ > 0.5) {
     title = "no link";
     fg = RED;
     bgRainbow = SUPERDARKRED;
@@ -330,8 +328,8 @@ void RCRemote::drawLCD(const uint32_t now) {
   } else { display_.drawCentered("no joy", pageBG); }
 
   // Draw telemetry using the common function
-  if ((now - lastTelemetry_.timestamp) < 1000) {
-    display_.drawTelem(lastTelemetry_, now, pageBG);
+  if (peer && peer->isRecent(now, 1000)) {
+    display_.drawTelem(peer->lastCmd_, now, pageBG);
   } else {
     // Show "no telemetry" if no recent data
     lcd->setFont(&FreeSans18pt7b);
@@ -339,11 +337,10 @@ void RCRemote::drawLCD(const uint32_t now) {
     display_.drawCentered("no telem", pageBG);
   }
 
-  if (selectedRover_ < maxRovers_) { //always true (for now)
+  if (true) { //validcount > 1) { //only show when handling multiple bots
     lcd->setFont(&FreeMono12pt7b);
     lcd->setTextColor(bgRainbow, pageBG);
-    auto mac = getClientDest();
-    String roverInfo =  String(mac[5], HEX) + " #" + String(selectedRover_) + "/" + String(roverCount_);
+    String roverInfo =  " #" + String(peerMgr_.activePeer_ + 1) + "/" + String(validcount);
     display_.drawCentered(roverInfo.c_str(), pageBG);
   }
 

@@ -16,6 +16,8 @@
 
 constexpr uint32_t IMU_UPDATE_PERIOD = 20; //ms
 const uint8_t BROADCAST_ADDRESS[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+const uint8_t* PEER_CRSF_MAC = BROADCAST_ADDRESS;
+
 
 bool canPrint() {
   #if ARDUINO_USB_CDC_ON_BOOT
@@ -77,6 +79,7 @@ void Controller::setup(DynamicsBase* dynamics, DriveManager* mgr, AlfredoCRSF* c
     if (controller_)
       controller_->handleRxPacket(mac, data, len);
   });
+  espnowRegisterMac(BROADCAST_ADDRESS);
 
 #ifdef IS_M5
   M5.begin();
@@ -99,21 +102,9 @@ void Controller::setup(DynamicsBase* dynamics, DriveManager* mgr, AlfredoCRSF* c
   delay(100);
 }
 
-uint8_t Controller::getLinkUpCount(uint32_t now, uint32_t threshold) const {
-  uint8_t ret = 0;
-  for (uint8_t i = 0; i < PEERS_MAX; i++) {
-    auto& peer = peerMgr_.peers_[i];
-    if (peer.isValid() && peer.isRecent(now, threshold))
-      ret++;
-  }
-  return ret;
-}
-
 bool Controller::isCrsfActive() const {
-  return crsf_ && (peerMgr_.activePeer_ == PEER_CRSF) && crsf_->isLinkUp();
+  return crsf_ && crsf_->isLinkUp() && peerMgr_.activePeer_ < PEERS_MAX && peerMgr_.isActive(peerMgr_.findPeerIdx(PEER_CRSF_MAC));
 }
-
-
 
 MotionControl Controller::getCrsfCtrl(uint32_t now) const {
   MotionControl ret = {};
@@ -163,26 +154,7 @@ behavior::Control Controller::getControl(uint32_t now) {
   return behaviors_.iterate(now, (p? p->lastCmd_ : MotionControl()), dynamics_->isBalancing(), behaviors_);
 }
 
-uint8_t Controller::findPeer(const uint8_t* mac, bool allownew) {
-  auto peeridx = peerMgr_.findPeerIdx(mac);
-  // Serial.printf("MC: a%d fwd %06.2f yaw %06.2f side %06.2f\n", rxmc.state, rxmc.fwd, rxmc.yaw, rxmc.side);
-  if ((peeridx >= PEERS_MAX) && allownew) { //new peer!
-    peeridx = peerMgr_.newPeer(mac);
-    D_LOG("New peer %02x:%02x:%02x:%02x:%02x:%02x -> %p", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], peeridx);
-    if (peeridx >= PEERS_MAX) return peeridx;
-    // Register peer
-    esp_now_peer_info_t newpeer = {0};
-    memcpy(newpeer.peer_addr, mac, 6);
-    newpeer.channel = 0;
-    newpeer.encrypt = false;
-    auto res = esp_now_add_peer(&newpeer);
-    if (res != ESP_OK && canPrint())
-      D_LOG("ESP-NOW add peer failed: %d", res);
-  }
-  return peeridx;
-}
-
-uint8_t Controller::delegatePeer(const Peer* old, uint32_t now) {
+uint8_t Controller::delegatePeer(const CPeer* old, uint32_t now) {
   for (uint8_t i = 0; i < PEERS_MAX; i++) {
     auto& peer = peerMgr_.peers_[i];
     if (old && &peer == old) continue;
@@ -199,7 +171,7 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_
     return printBuf(inbuf, inlen);
   }
   auto cmd = (Cmds)pkt.type;
-  auto peeridx = findPeer(mac, true);
+  auto peeridx = peerMgr_.findOrMakePeer(mac, true, true, false);
   auto peer = peerMgr_.findPeer(peeridx);
   if (!peer) {
     D_LOG("handleRx no peer");
@@ -226,7 +198,7 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_
   }
 }
 
-void Controller::send(Cmds cmd, const uint8_t* pyld, uint8_t len, Peer const* peer) {
+void Controller::send(Cmds cmd, const uint8_t* pyld, uint8_t len, CPeer const* peer) {
   uint8_t txBuf[comms::HEADER_OVERHEAD + len] = {0};
   uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, 0, pyld, len, txBuf, sizeof(txBuf));
   if (txLen > 0) {
@@ -293,10 +265,11 @@ void Controller::loop() {
 
     // Send telemetry to valid recent remotes
     #if 1
-    for (uint8_t i = PEER_CRSF + 1; i < PEERS_MAX; i++) {
+    auto cidx = peerMgr_.findPeerIdx(PEER_CRSF_MAC);
+    for (uint8_t i = 0; i < PEERS_MAX; i++) {
       auto& peer = peerMgr_.peers_[i];
-      if (! peer.isValid() || ! peer.isRecent(now, 1000)) continue;
-      send(Cmds::Telemetry, (uint8_t*)&telem_, sizeof(Telem), &peer);
+      if (i != cidx && peer.isValid() && peer.isRecent(now, 1000))
+        send(Cmds::Telemetry, (uint8_t*)&telem_, sizeof(Telem), &peer);
     }
     #else
     send(Cmds::Telemetry, (uint8_t*)&telem_, sizeof(Telem)); //broadcast telem
@@ -345,13 +318,17 @@ void Controller::loop() {
 
 
     // --- CRSF Rx --- //
-    auto newctrl = getCrsfCtrl(now);
-    auto& cpeer = peerMgr_.peers_[PEER_CRSF];
-    if (newctrl.state && cpeer.lastCmd_.state == 0) {
-      peerMgr_.activate(PEER_CRSF); //take control
-      D_LOG("CRSF arm");
+    auto crsfCtrl = getCrsfCtrl(now);
+    auto crsfIdx = PEERS_MAX;
+    if (crsfCtrl.timestamp) { //valid!
+      crsfIdx = peerMgr_.findOrMakePeer(PEER_CRSF_MAC, true, false, false);
+      auto cpeer = peerMgr_.findPeer(crsfIdx);
+      if (crsfCtrl.state && cpeer->lastCmd_.state == 0) {
+        peerMgr_.activate(crsfIdx); //take control
+        D_LOG("CRSF arm");
+      }
+      cpeer->lastCmd_ = crsfCtrl;
     }
-    cpeer.lastCmd_ = newctrl;
 
 
     auto aidx = peerMgr_.getActiveIdx();
@@ -370,7 +347,7 @@ void Controller::loop() {
       }
     }
 
-    if (isCrsfActive()) { //crsf control has extra features
+    if (peerMgr_.isActive(crsfIdx)) { //crsf control has extra features
       const auto chan8 = crsf_? crsf_->getChannel(8) : 0;
       bool enableAdjustment = arm && crsf_ && (chan8 > 1900);
       if (enableAdjustment && tunable) {
@@ -431,7 +408,7 @@ void Controller::drawLCD(const uint32_t now) {
   auto fg = BLACK;
   auto pageBG = BLACK;
   auto validCount = getValidDriveCount();
-  auto linkCount = getLinkUpCount(now);
+  auto linkCount = peerMgr_.getRecentCount(now, 1000);
   String title = dynamics_? dynamics_->getStatus() : "?";
   String err;
   if (telem_.vbus > 0.1 && telem_.vbus < lowVoltageCutoff_) err = "low batt!";

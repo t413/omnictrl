@@ -14,11 +14,16 @@ class AlfredoCRSF;
 class MotorDrive;
 class DriveManager;
 
+typedef Peer<MotionControl> CPeer;
+
+extern const uint8_t BROADCAST_ADDRESS[];
+extern const uint8_t* PEER_CRSF_MAC;
+
 class Controller {
   DriveManager* driveManager_ = nullptr;
   DynamicsBase* dynamics_ = nullptr;
   behavior::Manager behaviors_;
-  PeerMgr peerMgr_;
+  PeerMgr<MotionControl> peerMgr_;
 
   AlfredoCRSF* crsf_ = nullptr;
   bool enabled_ = false;
@@ -46,9 +51,8 @@ public:
   void disable();
 
   uint8_t findPeer(const uint8_t* mac, bool allownew);
-  uint8_t delegatePeer(const Peer* old, uint32_t now); //switch to secondary controll, if possible
+  uint8_t delegatePeer(const CPeer* old, uint32_t now); //switch to secondary controll, if possible
 
-  uint8_t getLinkUpCount(uint32_t now, uint32_t threshold = 1000) const;
   MotionControl getCrsfCtrl(uint32_t now) const;
   uint8_t getValidDriveCount() const;
   void resetPids();
@@ -64,7 +68,7 @@ public:
   behavior::Manager& getBehaviorMgr() { return behaviors_; }
   behavior::Control getControl(uint32_t now);
 
-  void send(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0, Peer const* peer = nullptr);
+  void send(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0, CPeer const* peer = nullptr);
   void handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len);
 
   void drawLCD(const uint32_t);
