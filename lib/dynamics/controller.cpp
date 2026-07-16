@@ -163,6 +163,26 @@ uint8_t Controller::delegatePeer(const CPeer* old, uint32_t now) {
   return PEERS_MAX;
 }
 
+CPeer* Controller::armActivate(uint8_t peeridx) {
+  auto ret = peerMgr_.findPeer(peeridx);
+  //TODO safety checks. sticks centered?
+  if (ret) { //arming
+    const auto& m = ret->lastCmd_;
+    for (float f : {m.fwd, m.side, m.yaw}) {
+      if (abs(f) > 0.06) {
+        D_LOG("arm-activate SAFETY CHECK FAIL (peer[%d])", peeridx);
+        return nullptr;
+      }
+    }
+    D_LOG("arm-activate peer[%d]", peeridx);
+    peerMgr_.activate(peeridx);
+  } else {
+    D_LOG("disarm (from[%d] to %d)", peerMgr_.activePeer_, peeridx);
+    disable();
+  }
+  return ret;
+}
+
 void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_t inlen) {
   comms::NowPacket pkt;
   if (!pkt.parse(inbuf, inlen)) {
@@ -182,8 +202,7 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_
     rxmc.timestamp = millis();
 
     if (rxmc.state > 0 && peer->lastCmd_.state == 0) {
-      peerMgr_.activate(peeridx);
-      D_LOG("ESPNow arm peer[%d]", peeridx);
+      armActivate(peeridx);
     }
     peer->lastCmd_ = rxmc;
 
@@ -212,6 +231,7 @@ void Controller::disable() {
     if (drives[i])
       drives[i]->setMode(MotorMode::Disabled);
   //TODO disable dynamics
+  peerMgr_.activate(PEERS_MAX);
 }
 
 bool Controller::quaternionToRotationMatrix(const float q[4], float r[3][3]) {
@@ -311,10 +331,10 @@ void Controller::loop() {
 
   if ((now - lastDrive) > IMU_UPDATE_PERIOD) {
     updateIMU();
+    now = millis(); //re-up
 
     //control inputs
     bool arm = enabled_;
-
 
     // --- CRSF Rx --- //
     auto crsfCtrl = getCrsfCtrl(now);
@@ -323,26 +343,21 @@ void Controller::loop() {
       crsfIdx = peerMgr_.findOrMakePeer(PEER_CRSF_MAC, true, false, false);
       auto cpeer = peerMgr_.findPeer(crsfIdx);
       if (crsfCtrl.state && cpeer->lastCmd_.state == 0) {
-        peerMgr_.activate(crsfIdx); //take control
-        D_LOG("CRSF arm");
+        armActivate(crsfIdx); //take control
       }
       cpeer->lastCmd_ = crsfCtrl;
     }
 
-
     auto aidx = peerMgr_.getActiveIdx();
     auto active = peerMgr_.findPeer(aidx);
-    bool stale = !active || !active->isRecent(now, 1000);
+    auto stale = active? active->getStale(now) : 1337;
 
-    if (active && (!active->lastCmd_.state || stale)) { //disarmed active ctrl or disconnected
+    if (active && (!active->lastCmd_.state || stale > 0)) { //disarmed active ctrl or disconnected
+      D_LOG("disarm/stale peer[%d] state %d, stale %d", aidx, active->lastCmd_.state, stale);
       aidx = delegatePeer(active, now);
-      peerMgr_.activate(aidx);
-      active = peerMgr_.findPeer(aidx);
+      active = armActivate(aidx);
       if (active) {
-        D_LOG("Delegated to [%d], stale %d", aidx, stale);
-      } else {
-        D_LOG("Disarming, no active control");
-        disable();
+        D_LOG("Delegated to [%d], (stale %d)", aidx, stale);
       }
     }
 

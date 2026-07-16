@@ -11,6 +11,7 @@ struct Peer {
   uint8_t mac[6] = {0};
   CmdT lastCmd_;
   uint32_t lastPing_ = 0;
+  int getStale(uint32_t now, uint32_t threshold=500) const { int dt = (now - lastHeard()); return (dt < threshold)? 0 : dt; }
   bool isRecent(uint32_t now, uint32_t threshold=500) const { return (now - lastHeard()) < threshold; }
   bool isArmed() const;
   uint32_t lastHeard() const;

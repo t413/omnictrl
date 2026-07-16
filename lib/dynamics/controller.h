@@ -51,6 +51,7 @@ public:
 
   uint8_t findPeer(const uint8_t* mac, bool allownew);
   uint8_t delegatePeer(const CPeer* old, uint32_t now); //switch to secondary controll, if possible
+  CPeer* armActivate(uint8_t peeridx);
 
   MotionControl getCrsfCtrl(uint32_t now) const;
   uint8_t getValidDriveCount() const;
