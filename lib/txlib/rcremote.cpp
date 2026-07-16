@@ -105,7 +105,7 @@ void RCRemote::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_t 
 uint8_t RCRemote::nextPeer(uint8_t old, bool allowold) {
   for (uint8_t i = 0; i < PEERS_MAX; i++) {
     auto& peer = peerMgr_.peers_[i];
-    if (old && i == old) continue;
+    if (i == old) continue;
     if (peer.isValid())
       return i;
   }
@@ -123,7 +123,14 @@ uint8_t RCRemote::validPeerCount() const {
 void RCRemote::setArmState(bool arm) {
   if (powerSaveMode_)
     return;
-  armed_ = !armed_;
+  if (arm) { //
+    for (float f : {lastMotion_.fwd, lastMotion_.side, lastMotion_.yaw}) {
+      if (abs(f) > 0.05) {
+        return;
+      }
+    }
+  }
+  armed_ = arm;
 }
 
 void RCRemote::send(Cmds cmd, const uint8_t* pyld, uint8_t len) {
