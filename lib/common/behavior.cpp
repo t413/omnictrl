@@ -1,43 +1,76 @@
 #include "behavior.h"
+#include "utils.h"
 #include "log.h"
 
 namespace behavior {
 
+float Oscillator::update(float intensity, float ts) {
+    float dt = ts - lastTime_;
+    lastTime_ = ts;
+    intensity = constrain(intensity, 0.0f, 1.0f);
+    float freq = freqMin_ + (freqMax_ - freqMin_) * intensity;
+    float amp = ampMin_ + (ampMax_ - ampMin_) * intensity;
+
+    float omega = 2.0f * M_PI * freq;
+    phase_ += omega * dt;
+    while (phase_ > 2.0f * M_PI) phase_ -= 2.0f * M_PI;
+
+    return amp * sinf(phase_);
+}
+
+// Returns cos(phase) at current phase, scaled by amplitude
+float Oscillator::getCos(float intensity) const {
+    intensity = constrain(intensity, 0.0f, 1.0f);
+    float amp = ampMin_ + (ampMax_ - ampMin_) * intensity;
+    return amp * cosf(phase_);
+}
+
+float Behavior::getIntensity(const MotionControl& m) {
+    return constrain(m.adjust, 0.0f, 1.0f);
+}
+
+
+
+// ------------- //
+//   Behaviors   //
+// ------------- //
 
 Control Happy::iterate(uint32_t now, const MotionControl& in, bool isBalancing, Manager& mgr) {
     Control out(in);
+    float intensity = getIntensity(in);
+    float tf = now / 1000.0f;
 
-    float elapsed = (now - startTime_) / 1000.0f;  // seconds
-    float omega = 2.0f * M_PI * frequency_;
-    float phase = omega * elapsed;
+    float sinVal = osc_.update(intensity, tf);
+    float cosVal = osc_.getCos(intensity);
 
-    // Circle: fwd = radius * cos(phase), side = radius * sin(phase)
     if (isBalancing) {
-        out.pitchOffsetDeg = 6.0 * sinf(phase / 2);
+        out.pitchOffsetDeg = 6.0f * sinVal;
     } else {
-        out.d_fwd += radius_ * cosf(phase);
-        out.d_side += radius_ * sinf(phase);
+        out.d_fwd += cosVal;
+        out.d_side += sinVal;
     }
     return out;
 }
 
 Control Excited::iterate(uint32_t now, const MotionControl& in, bool isBalancing, Manager& mgr) {
     Control out(in);
-    float elapsed = (now - startTime_) / 1000.0f;
-    float omega = 2.0f * M_PI * frequency_;
-    float phase = omega * elapsed;
-    out.d_yaw += amplitude_ * sinf(phase);
+    float intensity = getIntensity(in);
+    float tf = now / 1000.0f;
+
+    float sinVal = osc_.update(intensity, tf);
+    out.d_yaw += sinVal;
     return out;
 }
 
 Control Scared::iterate(uint32_t now, const MotionControl& in, bool isBalancing, Manager& mgr) {
     Control out(in);
     if (isBalancing)
-        mgr.clear(); //balancing is brave! no being scared.
-    float elapsed = (now - startTime_) / 1000.0f;
-    float omega = 2.0f * M_PI * frequency_;
-    float phase = omega * elapsed;
-    out.d_side += amplitude_ * sinf(phase);
+        mgr.clear();
+    float intensity = getIntensity(in);
+    float tf = now / 1000.0f;
+
+    float sinVal = osc_.update(intensity, tf);
+    out.d_side += sinVal;
     return out;
 }
 

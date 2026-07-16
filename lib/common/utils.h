@@ -2,6 +2,9 @@
 #include <stdint.h>
 #include <WString.h>
 #include <utility> //for pair
+#include <string>
+
+class HardwareSerial;
 
 String getResetReasons();
 String timeAgo(int seconds);

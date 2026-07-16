@@ -19,10 +19,28 @@ struct Control {
 
 // Base for any behavior
 struct Behavior {
-    uint32_t startTime_ = 0;
     virtual ~Behavior() = default;
+    static float getIntensity(const MotionControl& m);
     virtual Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) = 0;
 };
+
+struct Oscillator {
+    float lastTime_ = 0.0f;
+    float phase_ = 0.0f;
+    float freqMin_, freqMax_;
+    float ampMin_, ampMax_;
+
+    Oscillator(float freqMin = 0.1f, float freqMax = 5.0, float ampMin = 0.3, float ampMax = 1.2) :
+        freqMin_(freqMin), freqMax_(freqMax), ampMin_(ampMin), ampMax_(ampMax) { }
+
+    // Returns scaled amplitude * sin(phase)
+    // intensity: [0..1], higher = faster & bigger
+    // dt: delta time in seconds
+    float update(float intensity, float timeSeconds);
+    // Returns cos(phase) at current phase, scaled by amplitude
+    float getCos(float intensity) const;
+};
+
 
 
 
@@ -32,6 +50,7 @@ struct Behavior {
 
 struct Happy : Behavior {
 public:
+    Oscillator osc_ = Oscillator(1.2f, 7.0f, 2.6, 0.5f);  // freqMin, freqMax, ampMin, ampMax
     float frequency_ = 4.3f;   // Hz
     float radius_ = 1.0f;   // circle radius on fwd axis
 
@@ -39,15 +58,12 @@ public:
 };
 
 struct Excited : public Behavior {
-    float frequency_ = 5.0f;   // Hz
-    float amplitude_ = 0.8f;   // yaw shake amplitude [-1..1]
-
+    Oscillator osc_ = Oscillator(2.0f, 8.0f, 2.0f, 1.0f);  // freqMin, freqMax, ampMin, ampMax
     Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) override;
 };
 
 struct Scared : public Behavior {
-    float frequency_ = 5.0f;
-    float amplitude_ = 0.9f;
+    Oscillator osc_ = Oscillator(2.0f, 7.0f, 2.5f, 1.2f);  // freqMin, freqMax, ampMin, ampMax
     Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) override;
 };
 
