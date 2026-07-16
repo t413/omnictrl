@@ -4,6 +4,7 @@
 
 bool validMac(const uint8_t* mac);
 bool espnowRegisterMac(const uint8_t* mac);
+extern const uint8_t BROADCAST_ADDRESS[];
 
 template<typename CmdT>
 struct Peer {

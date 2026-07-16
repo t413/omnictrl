@@ -8,6 +8,8 @@
 
 using namespace std;
 
+const uint8_t BROADCAST_ADDRESS[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
 bool validMac(const uint8_t* mac) {
   for (int i = 0; i < 6; i++)
     if (mac[i] != 0) return true;

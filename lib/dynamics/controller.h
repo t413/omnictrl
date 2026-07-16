@@ -16,7 +16,6 @@ class DriveManager;
 
 typedef Peer<MotionControl> CPeer;
 
-extern const uint8_t BROADCAST_ADDRESS[];
 extern const uint8_t* PEER_CRSF_MAC;
 
 class Controller {
@@ -68,7 +67,7 @@ public:
   behavior::Manager& getBehaviorMgr() { return behaviors_; }
   behavior::Control getControl(uint32_t now);
 
-  void send(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0, CPeer const* peer = nullptr);
+  void send(Cmds cmd, CPeer const* peer, const uint8_t* pyld = nullptr, uint8_t len = 0);
   void handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len);
 
   void drawLCD(const uint32_t);

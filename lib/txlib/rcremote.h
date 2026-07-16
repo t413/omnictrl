@@ -52,7 +52,8 @@ public:
 
   uint8_t nextPeer(uint8_t current, bool allowold);
   uint8_t validPeerCount() const;
-  void send(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0, bool broadcast = false);
+  void send(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0);
+  void broadcast(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0);
 
   void setWakeupPower(bool wakeup);
 };

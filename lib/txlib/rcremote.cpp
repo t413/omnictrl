@@ -249,7 +249,7 @@ void RCRemote::loop() {
 
   // Send ping every 500ms
   if ((now - lastPing_) > 500) {
-    send(Cmds::Ping, nullptr, 0, true);
+    broadcast(Cmds::Ping);
     lastPing_ = now;
   }
 

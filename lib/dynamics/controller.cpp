@@ -15,7 +15,6 @@
 #include <WiFi.h>
 
 constexpr uint32_t IMU_UPDATE_PERIOD = 20; //ms
-const uint8_t BROADCAST_ADDRESS[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 const uint8_t* PEER_CRSF_MAC = BROADCAST_ADDRESS;
 
 
@@ -191,19 +190,19 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_
   } else if (cmd == Cmds::Ping) {
     peer->lastPing_ = millis();
     // Reply to ping with our MAC address
-    send(Cmds::PingReply, nullptr, 0, peer);
+    send(Cmds::PingReply, peer);
     D_LOG("Ping received from peer[%d], replied", peeridx);
   } else if (cmd == Cmds::ModeChange) {
     behaviors_.increment();
   }
 }
 
-void Controller::send(Cmds cmd, const uint8_t* pyld, uint8_t len, CPeer const* peer) {
+void Controller::send(Cmds cmd, CPeer const* peer, const uint8_t* pyld, uint8_t len) {
   uint8_t txBuf[comms::HEADER_OVERHEAD + len] = {0};
   uint8_t txLen = comms::NowPacket::serialise((uint8_t)cmd, 0, pyld, len, txBuf, sizeof(txBuf));
-  if (txLen > 0) {
-    auto result = esp_now_send(peer? peer->mac : BROADCAST_ADDRESS, txBuf, txLen);
-  }
+  if (txLen > 0 && peer) {
+    auto result = esp_now_send(peer->mac, txBuf, txLen);
+  } else D_LOG("tx can't send %p %d", peer, txLen);
 }
 
 void Controller::disable() {
@@ -269,7 +268,7 @@ void Controller::loop() {
     for (uint8_t i = 0; i < PEERS_MAX; i++) {
       auto& peer = peerMgr_.peers_[i];
       if (i != cidx && peer.isValid() && peer.isRecent(now, 1000))
-        send(Cmds::Telemetry, (uint8_t*)&telem_, sizeof(Telem), &peer);
+        send(Cmds::Telemetry, &peer, (uint8_t*)&telem_, sizeof(Telem));
     }
     #else
     send(Cmds::Telemetry, (uint8_t*)&telem_, sizeof(Telem)); //broadcast telem
