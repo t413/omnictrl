@@ -38,16 +38,14 @@ void UniBalancer::enable(bool en) {
       drives[i]->setMode(en? MotorMode::Current : MotorMode::Disabled);
 }
 
-void UniBalancer::iterate(uint32_t now) {
+void UniBalancer::iterate(uint32_t now, const behavior::Control& control, Madgwick& imu, DriveManager& dm) {
   auto motor = getMotor();
-  auto imu = ctrl_->getImuFilter();
-  auto control = ctrl_->getControl(now);
   auto& motion = control.m;
-  auto enabled = ctrl_->getEnabled();
+  bool enabled = motion.state > 0;
   auto telem = ctrl_->getTelem();
   const auto mstate = motor? motor->getMotorState() : MotorState();
 
-  float pitchFwd = imu->getPitchDegree();
+  float pitchFwd = imu.getPitchDegree();
   bool isUpOnEnd = abs(pitchFwd) < MAX_TILT; //more tilt allowed when balancing
 
   //main control loop

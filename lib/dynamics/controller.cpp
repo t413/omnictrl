@@ -67,22 +67,20 @@ void imuControlTask(void* arg) {
       ctrl->imuFilt_.updateIMU<0,'D'>(-data.gyro.y * ctrl->gyroScale_, -data.gyro.x * ctrl->gyroScale_, -data.gyro.z, data.accel.y, data.accel.x, data.accel.z); //acc x/y are swapped
 
       portENTER_CRITICAL(&ctrl->ctrlState_.lock);
-      MotionControl cmd = ctrl->ctrlState_.activeCmd; // get latest setpoint from main thread
+      auto cmd = ctrl->ctrlState_.activeCmd; // get latest setpoint from main thread
       portEXIT_CRITICAL(&ctrl->ctrlState_.lock);
 
-      if (ctrl->dynamics_) { // Update dynamics (PIDs, writes to can bus)
-        ctrl->dynamics_->iterate(now / 1000); // convert µs to ms
-      }
-
-      if (ctrl->driveManager_) { // process incoming can messages
+      if (ctrl->dynamics_ && ctrl->driveManager_) { // Update dynamics (PIDs, writes to can bus)
+        ctrl->dynamics_->iterate(now / 1000, cmd, ctrl->imuFilt_, *ctrl->driveManager_); // convert µs to ms
         ctrl->driveManager_->iterate(now / 1000);
       }
 
       // 6. Write IMU state back for main thread
       portENTER_CRITICAL(&ctrl->ctrlState_.lock);
       ctrl->ctrlState_.gyroZ = -data.gyro.z;
-      ctrl->ctrlState_.accelX = constrain(data.accel.x / 10.0f, -1.0f, 1.0f);
-      ctrl->ctrlState_.accelY = constrain(data.accel.y / 10.0f, -1.0f, 1.0f);
+      ctrl->ctrlState_.accelX = data.accel.x;
+      ctrl->ctrlState_.accelY = data.accel.y;
+      ctrl->ctrlState_.accelZ = data.accel.z;
       ctrl->ctrlState_.timestamp = now / 1000;
       portEXIT_CRITICAL(&ctrl->ctrlState_.lock);
 
@@ -449,8 +447,10 @@ void Controller::loop() {
     }
     enabled_ = arm;
 
+    auto control = getControl(now); //calculates behavior motion
+
     portENTER_CRITICAL(&ctrlState_.lock);
-    ctrlState_.activeCmd = active? active->lastCmd_ : MotionControl(); //write for the controll thread to read
+    ctrlState_.activeCmd = control; //write for the controll thread to read
     portEXIT_CRITICAL(&ctrlState_.lock);
 
     lastDrive = now;
@@ -470,7 +470,7 @@ void Controller::loop() {
 void Controller::drawLEDs(const uint32_t now) {
   auto aidx = peerMgr_.getActiveIdx();
   auto active = peerMgr_.findPeer(aidx);
-  float energy = active? fabsf(active->lastCmd_.fwd) + fabsf(active->lastCmd_.yaw) : 0.0f;
+  float energy = active? fabsf(active->lastCmd_.fwd) + fabsf(active->lastCmd_.side) + fabsf(active->lastCmd_.yaw) : 0.0f;
   energy = constrain(energy / 1.5f, 0.0f, 1.0f);
   portENTER_CRITICAL(&ctrlState_.lock);
   float ax = ctrlState_.accelX;

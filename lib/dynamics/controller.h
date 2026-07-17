@@ -17,9 +17,9 @@ class DriveManager;
 
 typedef Peer<MotionControl> CPeer;
 struct ControlState {
-  float gyroZ = 0.0f, accelX = 0.0f, accelY = 0.0f;
+  float gyroZ = 0.0f, accelX = 0.0f, accelY = 0.0f, accelZ = 0.0f;
   uint32_t timestamp = 0;
-  MotionControl activeCmd = {};
+  behavior::Control activeCmd;
   portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
 };
 extern const uint8_t* PEER_CRSF_MAC;

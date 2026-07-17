@@ -5,6 +5,7 @@
 #include <MadgwickAHRS.h>
 #include <controller.h>
 #include <utils.h>
+#include <multimotor/drive_manager.h>
 
 TriOmni::TriOmni(Controller* ctrl) : DynamicsBase(ctrl) { }
 
@@ -41,17 +42,15 @@ void TriOmni::enable(bool en) {
       drives[i]->setMode(en? MotorMode::Speed : MotorMode::Disabled);
 }
 
-void TriOmni::iterate(uint32_t now) {
-  auto drives = ctrl_->getDrives();
-  auto dcount = ctrl_->getDriveCount();
-  auto imu = ctrl_->getImuFilter();
-  auto control = ctrl_->getControl(now);
-  auto& m = control.m;
-  auto enabled = ctrl_->getEnabled();
+void TriOmni::iterate(uint32_t now, const behavior::Control& control, Madgwick& imu, DriveManager& dm) {
+  auto drives = dm.getDrives();
+  auto dcount = dm.getCount();
+  auto m = control.m;
+  bool enabled = m.state > 0;
   auto telem = ctrl_->getTelem();
 
   float q[4] = {0};
-  imu->getQuaternion(q);
+  imu.getQuaternion(q);
 
   float R[3][3] = {0};
   Controller::quaternionToRotationMatrix(q, R);

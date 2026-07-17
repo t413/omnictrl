@@ -22,7 +22,7 @@ public:
 
   virtual void init();
   virtual void enable(bool);
-  virtual void iterate(uint32_t now);
+  virtual void iterate(uint32_t now, const behavior::Control&, Madgwick&, DriveManager&);
   virtual void resetPids();
   virtual String getStatus() const { return status_; }
   virtual bool isBalancing() const { return isBalancing_; }

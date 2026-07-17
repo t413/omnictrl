@@ -14,6 +14,7 @@ struct Control {
     MotionControl m;
     float d_fwd = 0, d_side = 0, d_yaw = 0; //offsets in motor speed terms
     float pitchOffsetDeg = 0;
+    Control() { }
     Control(MotionControl in) : m(in) { }
 };
 

@@ -3,7 +3,9 @@
 #include <WString.h>
 
 class Controller;
-class MotorDrive;
+class Madgwick;
+class DriveManager;
+namespace behavior { struct Control; }
 
 class DynamicsBase {
 protected:
@@ -15,7 +17,7 @@ public:
 
   virtual void init() = 0;
   virtual void enable(bool) = 0;
-  virtual void iterate(uint32_t now) = 0;
+  virtual void iterate(uint32_t now, const behavior::Control&, Madgwick&, DriveManager&) = 0;
   virtual void resetPids() = 0;
   virtual String getStatus() const = 0;
   virtual bool isBalancing() const { return false; }
