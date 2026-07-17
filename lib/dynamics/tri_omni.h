@@ -7,7 +7,7 @@
 class TriOmni : public DynamicsBase {
   PIDCtrl balanceCtrl_ = PIDCtrl(0.6, 0.0, 0.1, 2); //outputs torque in A
   PIDCtrl balanceSpeedCtrl_ = PIDCtrl(90.0, 0.0, 0.4, 30, 60); //outputs speed
-  PIDCtrl balanceYawCtrl_ = PIDCtrl(4.0, 0.0, 0.1, 2, 100); //outputs torque
+  PIDCtrl balanceYawCtrl_ = PIDCtrl(8.0, 0.0, 0.2, 2, 100); //outputs torque
   float fwdSpeed_ = 0.0; //fwd/back speed from motor drives
   float yawSpeed_ = 0.0;
   uint32_t lastBalanceChange_ = 0;
