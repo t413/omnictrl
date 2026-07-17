@@ -2,22 +2,21 @@
 #include <stdint.h>
 #include <WString.h>
 
-class Controller;
-class Madgwick;
+class MotionTask;
 class DriveManager;
-namespace behavior { struct Control; }
+struct SharedState;
 
 class DynamicsBase {
 protected:
-  Controller* ctrl_;
+  MotionTask* ctx_;
 
 public:
-  DynamicsBase(Controller* ctrl) : ctrl_(ctrl) { }
+  DynamicsBase(MotionTask* ctx) : ctx_(ctx) { }
   virtual ~DynamicsBase() = default;
 
   virtual void init() = 0;
   virtual void enable(bool) = 0;
-  virtual void iterate(uint32_t now, const behavior::Control&, Madgwick&, DriveManager&) = 0;
+  virtual void iterate(uint32_t now, SharedState&, DriveManager&) = 0;
   virtual void resetPids() = 0;
   virtual String getStatus() const = 0;
   virtual bool isBalancing() const { return false; }

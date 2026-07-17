@@ -3,27 +3,27 @@
 #include <multimotor/motordrive.h>
 #include <AlfredoCRSF.h>
 #include <MadgwickAHRS.h>
-#include <controller.h>
+#include <motiontask.h>
 #include <utils.h>
 #include <multimotor/drive_manager.h>
 
-TriOmni::TriOmni(Controller* ctrl) : DynamicsBase(ctrl) { }
+TriOmni::TriOmni(MotionTask* ctrl) : DynamicsBase(ctrl) { }
 
 void TriOmni::init() {
-  ctrl_->addAdjustable(&balanceCtrl_.P, "b.P");
-  ctrl_->addAdjustable(&balanceCtrl_.I, "b.I");
-  ctrl_->addAdjustable(&balanceCtrl_.D, "b.D");
-  ctrl_->addAdjustable(&balanceCtrl_.rampLimit, "b.Rl");
-  ctrl_->addAdjustable(&balanceSpeedCtrl_.P, "spd.P");
-  ctrl_->addAdjustable(&balanceSpeedCtrl_.I, "spd.I");
-  ctrl_->addAdjustable(&balanceSpeedCtrl_.D, "spd.D");
-  ctrl_->addAdjustable(&balanceSpeedCtrl_.rampLimit, "spd.Rl");
-  ctrl_->addAdjustable(&balanceYawCtrl_.P, "b.yaw.P");
-  ctrl_->addAdjustable(&balanceYawCtrl_.I, "b.yaw.I");
-  ctrl_->addAdjustable(&balanceYawCtrl_.D, "b.yaw.D");
+  ctx_->addAdjustable(&balanceCtrl_.P, "b.P");
+  ctx_->addAdjustable(&balanceCtrl_.I, "b.I");
+  ctx_->addAdjustable(&balanceCtrl_.D, "b.D");
+  ctx_->addAdjustable(&balanceCtrl_.rampLimit, "b.Rl");
+  ctx_->addAdjustable(&balanceSpeedCtrl_.P, "spd.P");
+  ctx_->addAdjustable(&balanceSpeedCtrl_.I, "spd.I");
+  ctx_->addAdjustable(&balanceSpeedCtrl_.D, "spd.D");
+  ctx_->addAdjustable(&balanceSpeedCtrl_.rampLimit, "spd.Rl");
+  ctx_->addAdjustable(&balanceYawCtrl_.P, "b.yaw.P");
+  ctx_->addAdjustable(&balanceYawCtrl_.I, "b.yaw.I");
+  ctx_->addAdjustable(&balanceYawCtrl_.D, "b.yaw.D");
 
-  auto drives = ctrl_->getDrives();
-  auto dcount = ctrl_->getDriveCount();
+  auto drives = ctx_->getDrives();
+  auto dcount = ctx_->getDriveCount(false);
   for (uint8_t i = 0; i < dcount; i++) {
     if (drives[i])
       drives[i]->setMode(MotorMode::Disabled); // start with disabled mode
@@ -32,43 +32,36 @@ void TriOmni::init() {
 
 void TriOmni::enable(bool en) {
   resetPids();
-  auto drives = ctrl_->getDrives();
-  auto dcount = ctrl_->getDriveCount();
+  auto drives = ctx_->getDrives();
+  auto dcount = ctx_->getDriveCount(false);
   for (uint8_t i = 0; i < dcount; i++)
     if (drives[i])
       drives[i]->setMode(en? MotorMode::Speed : MotorMode::Disabled);
 }
 
-void TriOmni::iterate(uint32_t now, const behavior::Control& control, Madgwick& imu, DriveManager& dm) {
+void TriOmni::iterate(uint32_t now, SharedState& state, DriveManager& dm) {
   auto drives = dm.getDrives();
   auto dcount = dm.getCount();
-  auto m = control.m;
+  auto m = state.activeCmd.m;
   bool enabled = m.state > 0;
-  auto telem = ctrl_->getTelem();
-
-  float q[4] = {0};
-  imu.getQuaternion(q);
 
   float R[3][3] = {0};
-  Controller::quaternionToRotationMatrix(q, R);
+  MotionTask::quaternionToRotationMatrix(state.q, R);
 
   float pitchFwd = (atan2(-R[2][0], R[2][2]) + PI / 2) * 180.0 / PI;
   bool isUpOnEnd = abs(pitchFwd) < MAX_TILT; //more tilt allowed when balancing
   bool newbalance = isBalancing_ || isUpOnEnd;
   bool balanceModeSpeed = false;
 
-  if (ctrl_->isCrsfActive()) { //crsf control has extra features
-    auto crsf = ctrl_->getCrsf();
-    bool balanceModeEn = crsf->getChannel(6) > 1400;
-    balanceModeSpeed = crsf->getChannel(6) > 1600;
+  if (state.crsfActive) { //crsf control has extra features
+    bool balanceModeEn = state.crsfChans[6] > 1400;
+    balanceModeSpeed = state.crsfChans[6] > 1600;
     newbalance &= balanceModeEn;
-    yawCtrlEnabled_ = crsf->getChannel(9) > 1400;
   } else {
     m.maxSpeed = min(18.0f, m.maxSpeed); //limit
   }
 
   if (!enabled) {
-    yawCtrlEnabled_ = false;
     newbalance = false;
   } else if (isBalancing_ && newbalance && !isUpOnEnd) {
     if ((now - lastBalanceChange_) > 2000) //extra leeway when getting going
@@ -89,9 +82,9 @@ void TriOmni::iterate(uint32_t now, const behavior::Control& control, Madgwick& 
     m.side *= m.maxSpeed;
     m.yaw  *= m.maxSpeed;
 
-    m.fwd  += control.d_fwd;
-    m.side += control.d_side;
-    m.yaw  += control.d_yaw;
+    m.fwd  += state.activeCmd.d_fwd;
+    m.side += state.activeCmd.d_side;
+    m.yaw  += state.activeCmd.d_yaw;
 
     float y = -m.yaw; //convert yaw to angular rate
 
@@ -121,7 +114,7 @@ void TriOmni::iterate(uint32_t now, const behavior::Control& control, Madgwick& 
       // Blend between angle-control and odometry speed control
       const uint32_t balanceChangeDuration = 2000; //ms
       float pitchGoal = balanceModeSpeed? balanceSpeedCtrl_.update(now, fwdSpeed_ - m.fwd) : -m.fwd;
-      pitchGoal += control.pitchOffsetDeg;
+      pitchGoal += state.activeCmd.pitchOffsetDeg;
       if (balanceModeSpeed && (now - lastBalanceChange_) < balanceChangeDuration) {
         const float blendT = (now - lastBalanceChange_) / (float)balanceChangeDuration;
         pitchGoal = blend( -m.fwd, pitchGoal, blendT);
@@ -145,16 +138,11 @@ void TriOmni::iterate(uint32_t now, const behavior::Control& control, Madgwick& 
       drives[LEFT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  - m.fwd   - m.side * 1.33/2);
       drives[RGHT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  + m.fwd   - m.side * 1.33/2);
     }
-
-    telem->pitch = pitchFwd; //save for next loop
-
   } //drive count check
 
   status_ = isBalancing_? "woah." : enabled? "wee!" : ":|";
 
-  auto display = ctrl_->getDisplay();
-  uint8_t rot = (isBalancing_ || (abs(pitchFwd) < MAX_TILT)) ? 0 : 2;
-  display->setRotation(rot);
+  state.dispRotate = (isBalancing_ || (abs(pitchFwd) < MAX_TILT)) ? 0 : 2;
 }
 
 void TriOmni::resetPids() {

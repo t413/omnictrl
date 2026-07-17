@@ -1,5 +1,6 @@
 #include "version.h"
 #include <controller.h>
+#include <motiontask.h>
 #include <AlfredoCRSF.h>
 #include <multimotor/can/cybergear.h>
 #include <multimotor/can/can_esp32_twai.h>
@@ -22,7 +23,8 @@ constexpr int PIN_CAN_TX  = 2;
 
 AlfredoCRSF crsf_;
 Controller ctrl(GIT_VERSION);
-TriOmni triOmni(&ctrl);
+MotionTask motion;
+TriOmni triOmni(&motion);
 
 void setup() {
   Serial1.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_CRSF_RX, PIN_CRSF_TX);
@@ -34,8 +36,9 @@ void setup() {
   driveManager.addDrive(&mot_right);
   driveManager.addDrive(&mot_left);
 
-  ctrl.setup(&triOmni, &driveManager, &crsf_);
+  ctrl.setup(&motion.getState(), &crsf_);
   ctrl.lowVoltageCutoff_ = LOW_BATTERY_VOLTAGE;
+  motion.setup(&triOmni, &driveManager, &ctrl);
 }
 
 void loop() {

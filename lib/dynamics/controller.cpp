@@ -1,11 +1,9 @@
 #include "controller.h"
+#include "motiontask.h"
 #include <log.h>
 #include <NowPacket.h>
 #include <dynamics_base.h>
 #include <AlfredoCRSF.h>
-#include <multimotor/drive_manager.h>
-#include <multimotor/can/can_esp32_twai.h>
-#include <multimotor/motordrive.h>
 #include "utils.h"
 #include <Arduino.h>
 #ifdef IS_M5
@@ -49,51 +47,9 @@ void Controller::addAdjustable(float* adjustable, const String& name) {
   D_LOG("No space for new adjustable");
 }
 
-void imuControlTask(void* arg) {
-  Controller* ctrl = (Controller*)arg;
-  uint32_t lastRun = micros();
-  constexpr uint32_t PERIOD_US = IMU_UPDATE_PERIOD * 1000;
-
-  while (1) {
-    uint32_t now = micros();
-    if (now - lastRun >= PERIOD_US) {
-      if (!M5.Imu.isEnabled()) {
-        delayMicroseconds(100);
-        continue;
-      }
-      M5.Imu.update();
-      auto data = M5.Imu.getImuData();
-
-      ctrl->imuFilt_.updateIMU<0,'D'>(-data.gyro.y * ctrl->gyroScale_, -data.gyro.x * ctrl->gyroScale_, -data.gyro.z, data.accel.y, data.accel.x, data.accel.z); //acc x/y are swapped
-
-      portENTER_CRITICAL(&ctrl->ctrlState_.lock);
-      auto cmd = ctrl->ctrlState_.activeCmd; // get latest setpoint from main thread
-      portEXIT_CRITICAL(&ctrl->ctrlState_.lock);
-
-      if (ctrl->dynamics_ && ctrl->driveManager_) { // Update dynamics (PIDs, writes to can bus)
-        ctrl->driveManager_->iterate(now / 1000);
-        ctrl->dynamics_->iterate(now / 1000, cmd, ctrl->imuFilt_, *ctrl->driveManager_); // convert µs to ms
-      }
-
-      // 6. Write IMU state back for main thread
-      portENTER_CRITICAL(&ctrl->ctrlState_.lock);
-      ctrl->ctrlState_.gyroZ = -data.gyro.z;
-      ctrl->ctrlState_.accelX = data.accel.x;
-      ctrl->ctrlState_.accelY = data.accel.y;
-      ctrl->ctrlState_.accelZ = data.accel.z;
-      ctrl->ctrlState_.timestamp = now / 1000;
-      portEXIT_CRITICAL(&ctrl->ctrlState_.lock);
-
-      lastRun = now;
-    }
-    delayMicroseconds(100);
-  }
-}
-
-void Controller::setup(DynamicsBase* dynamics, DriveManager* mgr, AlfredoCRSF* crsf) {
+void Controller::setup(SharedState* shared, AlfredoCRSF* crsf) {
   controller_ = this;
-  dynamics_ = dynamics;
-  driveManager_ = mgr;
+  sharedState_ = shared;
   crsf_ = crsf;
 #ifdef CONFIG_IDF_TARGET_ESP32
   Serial.begin(115200);
@@ -127,17 +83,11 @@ void Controller::setup(DynamicsBase* dynamics, DriveManager* mgr, AlfredoCRSF* c
     M5.Lcd.setRotation(2); //flip
   }
   M5.Power.begin();
-  if (M5.Imu.isEnabled()) {
-    M5.Imu.loadOffsetFromNVS();
-    imuFilt_.setFrequency(1000.0f / IMU_UPDATE_PERIOD); //Hz
-  }
 
   if (canPrint())
     D_LOG("finished setup");
 
   delay(100);
-  D_LOG("starting imu task");
-  xTaskCreatePinnedToCore(imuControlTask, "IMUCtrl", 4096, this, 3, &imuTaskHandle_, 0);
   leds_.setup();
 }
 
@@ -159,38 +109,10 @@ MotionControl Controller::getCrsfCtrl(uint32_t now) const {
   return ret;
 }
 
-uint8_t Controller::getValidDriveCount() const {
-  uint8_t validCount = 0;
-  const uint8_t driveCount = getDriveCount();
-  if (driveCount == 0) return 0;
-  auto drives = driveManager_->getDrives();
-
-  for (int i = 0; i < driveCount; i++) {
-    if (drives[i] == nullptr) break;
-    bool hasRecent = (millis() - drives[i]->getLastStatusTime()) < 1000;
-    if (hasRecent) validCount++;
-  }
-  return validCount;
-}
-
-void Controller::resetPids() {
-  if (dynamics_) {
-    dynamics_->resetPids();
-  }
-}
-
-MotorDrive* const* Controller::getDrives() const {
-  return driveManager_? driveManager_->getDrives() : nullptr;
-}
-
-uint8_t Controller::getDriveCount() const {
-  return driveManager_? driveManager_->getCount() : 0;
-}
-
 behavior::Control Controller::getControl(uint32_t now) {
   auto pidx = peerMgr_.getActiveIdx();
   auto p = peerMgr_.findPeer(pidx);
-  return behaviors_.iterate(now, (p? p->lastCmd_ : MotionControl()), dynamics_->isBalancing(), behaviors_);
+  return behaviors_.iterate(now, (p? p->lastCmd_ : MotionControl()), sharedState_->isBalancing, behaviors_);
 }
 
 uint8_t Controller::delegatePeer(const CPeer* old, uint32_t now) {
@@ -282,73 +204,22 @@ void Controller::sendInfoStr(String s, CPeer const* peer) {
 }
 
 void Controller::disable(String reason) {
-  auto drives = getDrives();
-  auto count = getDriveCount();
-  for (int i = 0; i < count; i++)
-    if (drives[i])
-      drives[i]->setMode(MotorMode::Disabled);
-  //TODO disable dynamics
-  peerMgr_.activate(PEERS_MAX);
+  peerMgr_.activate(PEERS_MAX); //changes active peer, propagates to MotionTask
   sendInfoStr(reason.isEmpty()? "disable" : reason);
 }
 
-bool Controller::quaternionToRotationMatrix(const float q[4], float r[3][3]) {
-  // float R[3][3] = {0};
-  r[0][0] = 1 - 2 * (q[2] * q[2] + q[3] * q[3]);
-  r[0][1] = 2 * (q[1] * q[2] - q[0] * q[3]);
-  r[0][2] = 2 * (q[1] * q[3] + q[0] * q[2]);
-  r[1][0] = 2 * (q[1] * q[2] + q[0] * q[3]);
-  r[1][1] = 1 - 2 * (q[1] * q[1] + q[3] * q[3]);
-  r[1][2] = 2 * (q[2] * q[3] - q[0] * q[1]);
-  r[2][0] = 2 * (q[1] * q[3] - q[0] * q[2]);
-  r[2][1] = 2 * (q[2] * q[3] + q[0] * q[1]);
-  r[2][2] = 1 - 2 * (q[1] * q[1] + q[2] * q[2]);
-  return true;
-}
-
 uint32_t lastDraw = 0;
-uint32_t lastDrive = 1000;
-uint32_t lastPollStats = 0;
-uint32_t lastRefreshDrives = 0;
 uint32_t lastTxStats = 0;
+uint32_t lastUpdateTx = 1000;
 
 void Controller::loop() {
   uint32_t now = millis();
-  auto drives = getDrives();
-  auto dcount = getDriveCount();
 
-  if ((now - lastPollStats) > 200) {
-    uint32_t latest = 0;
-    for (int i = 0; i < dcount; i++) {
-      if (!drives[i]) break;
-      auto time = drives[i]->getLastStatusTime();
-      latest = max(latest, time);
-      auto state = drives[i]->getMotorState();
-      if (!enabled_ && state.mode != MotorMode::Disabled)
-        drives[i]->setMode(MotorMode::Disabled); //should be disabled
-      drives[i]->fetchVBus();  // Also request VBUS parameter
-      if ((now - time) > 200)
-        continue;
-      auto v = drives[i]->getVBus();
-      if (telem_.vbus < 0.1 && v > 0.1)
-        telem_.vbus = v; // initialize filtered VBUS
-      telem_.vbus = 0.9 * telem_.vbus + 0.1 * v; // simple low-pass filter
-    }
-    if (telem_.vbus < (lowVoltageCutoff_ - 0.2) && enabled_) {
-      disable("low v"); //disable if voltage is too low
-    }
-    telem_.timestamp = latest;
-
-    // broadcast telemetry
-    broadcast(Cmds::Telemetry, (uint8_t*)&telem_, sizeof(Telem));
-
-    lastPollStats = now;
-    // Serial.println("MAC: " + WiFi.macAddress());
-  }
   if (((now - lastTxStats) > 100)) {
+    auto telem = sharedState_->getCopy().telem;
     if (crsf_ && crsf_->isLinkUp()) {
       crsf_sensor_battery_t crsfBatt = {
-        .voltage = htobe16((uint16_t)(telem_.vbus * 10.0)),
+        .voltage = htobe16((uint16_t)(telem.vbus * 10.0)),
         .current = htobe16((uint16_t)(0 * 10.0)),
         .capacity = (uint16_t)(htobe16((uint16_t)(0)) << 8),
         .remaining = (uint8_t)(0),
@@ -363,6 +234,13 @@ void Controller::loop() {
       D_LOG("mode change %s", behaviors_.getName());
       lastBehaviorIdx_ = behaviors_.activeIdx_;
     }
+
+    if (telem.vbus < (lowVoltageCutoff_ - 0.2) && enabled_) {
+      disable("low v"); //disable if voltage is too low
+    }
+
+    // broadcast telemetry
+    broadcast(Cmds::Telemetry, (uint8_t*)&telem, sizeof(Telem));
 
     lastTxStats = now;
   }
@@ -385,14 +263,7 @@ void Controller::loop() {
   #endif
   float* tunable = selectedTune_ < MAX_ADJUSTABLES? adjustables_[selectedTune_] : NULL;
 
-  if ((now - lastRefreshDrives) > (IMU_UPDATE_PERIOD - 2)) {
-    for (int i = 0; i < dcount; i++) {
-      if (drives[i]) drives[i]->requestStatus();
-    }
-    lastRefreshDrives = now; //also updated below, to keep in sync with IMU updates
-  }
-
-  if ((now - lastDrive) > IMU_UPDATE_PERIOD) {
+  if ((now - lastUpdateTx) > IMU_UPDATE_PERIOD) {
     // IMU reading, dynamics iterate, drive iterate now done in separate thread in imuControlTask
     //control inputs
     bool arm = enabled_;
@@ -442,24 +313,29 @@ void Controller::loop() {
       // -- ENABLING, arming, whatever -- //
       display_.requestRedraw();
       behaviors_.clear();
-      if (dynamics_)
-        dynamics_->enable(arm); //changed state, notify
     }
     enabled_ = arm;
 
     auto control = getControl(now); //calculates behavior motion
 
-    portENTER_CRITICAL(&ctrlState_.lock);
-    ctrlState_.activeCmd = control; //write for the controll thread to read
-    portEXIT_CRITICAL(&ctrlState_.lock);
+    portENTER_CRITICAL(&sharedState_->lock);
+    sharedState_->activeCmd = control; //write for the controll thread to read
+    sharedState_->crsfActive = isCrsfActive();
+    for (uint8_t c = 0; c < CRSF_CHANS; c++)
+      sharedState_->crsfChans[c] = crsf_->getChannel(CRSF_CHANS);
+    auto rot = sharedState_->dispRotate;
+    portEXIT_CRITICAL(&sharedState_->lock);
+    display_.setRotation(rot);
 
-    lastDrive = now;
-    lastRefreshDrives = now; //keep drive refresh in sync with this task
+    lastUpdateTx = now;
   } //IMU timing
 
   if ((now - lastDraw) > 60 || display_.isRedrawRequired()) {
+    yield();
     drawLCD(now);
+    yield();
     drawLEDs(now);
+    yield();
     lastDraw = now;
   }
 
@@ -470,13 +346,11 @@ void Controller::loop() {
 void Controller::drawLEDs(const uint32_t now) {
   auto aidx = peerMgr_.getActiveIdx();
   auto active = peerMgr_.findPeer(aidx);
-  float energy = active? fabsf(active->lastCmd_.fwd) + fabsf(active->lastCmd_.side) + fabsf(active->lastCmd_.yaw) : 0.0f;
-  energy = constrain(energy / 1.5f, 0.0f, 1.0f);
-  portENTER_CRITICAL(&ctrlState_.lock);
-  float ax = ctrlState_.accelX;
-  float ay = ctrlState_.accelY;
-  float az = ctrlState_.accelZ;
-  portEXIT_CRITICAL(&ctrlState_.lock);
+  portENTER_CRITICAL(&sharedState_->lock);
+  float ax = sharedState_->accelX;
+  float ay = sharedState_->accelY;
+  float az = sharedState_->accelZ;
+  portEXIT_CRITICAL(&sharedState_->lock);
   leds_.update(now, ax, ay, az);
 
   // Simple behavior → color+fire mapping
@@ -490,15 +364,16 @@ void Controller::drawLEDs(const uint32_t now) {
 }
 
 void Controller::drawLCD(const uint32_t now) {
+  auto state = sharedState_->getCopy();
   display_.startFrame();
   auto bgRainbow = display_.timeRainbow(now);
   auto fg = BLACK;
   auto pageBG = BLACK;
-  auto validCount = getValidDriveCount();
+  auto validCount = state.validDriveCount;
   auto linkCount = peerMgr_.getRecentCount(now, 1000);
-  String title = dynamics_? dynamics_->getStatus() : "?";
+  String title = state.title;
   String err;
-  if (telem_.vbus > 0.1 && telem_.vbus < lowVoltageCutoff_) err = "low batt!";
+  if (state.telem.vbus > 0.1 && state.telem.vbus < lowVoltageCutoff_) err = "low batt!";
   else if (!validCount) err = "no drives!";
   else if (!linkCount) err = "NO LINK";
   if (!err.isEmpty()) {
@@ -513,7 +388,7 @@ void Controller::drawLCD(const uint32_t now) {
   display_.drawBorder(bgRainbow);
   display_.drawTitle(title.c_str(), fg, bgRainbow);
   display_.clearContent(pageBG, now);
-  display_.drawTelem(telem_, now, pageBG);
+  display_.drawTelem(state.telem, now, pageBG);
   display_.setFont(&FreeSansBold9pt7b);
   if (behaviors_.isActive())
     display_.drawCentered(behaviors_.getName(), pageBG);

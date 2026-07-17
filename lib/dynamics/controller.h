@@ -6,7 +6,6 @@
 #include <peers.h>
 #include <leds.h>
 #include <WString.h>
-#include <MadgwickAHRS.h>
 
 namespace lgfx { inline namespace v1 { class LGFX_Device; } }
 
@@ -14,40 +13,28 @@ class DynamicsBase;
 class AlfredoCRSF;
 class MotorDrive;
 class DriveManager;
-
+struct SharedState;
 typedef Peer<MotionControl> CPeer;
-struct ControlState {
-  float gyroZ = 0.0f, accelX = 0.0f, accelY = 0.0f, accelZ = 0.0f;
-  uint32_t timestamp = 0;
-  behavior::Control activeCmd;
-  portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
-};
+
 extern const uint8_t* PEER_CRSF_MAC;
 
 class Controller {
-  DriveManager* driveManager_ = nullptr;
-  DynamicsBase* dynamics_ = nullptr;
   behavior::Manager behaviors_;
   int8_t lastBehaviorIdx_ = -1;
   PeerMgr<MotionControl> peerMgr_;
+  DisplayHandler display_;
   leds::LedRig leds_;
 
   AlfredoCRSF* crsf_ = nullptr;
-  bool enabled_ = false;
-  Madgwick imuFilt_;
-  float gyroScale_ = 1.0;
   int lastchan8_ = 0;
-
-  Telem telem_;
-  DisplayHandler display_;
+  bool enabled_ = false;
 
   static const uint8_t MAX_ADJUSTABLES = 15;
   float* adjustables_[MAX_ADJUSTABLES] = {0};
   String adjNames_[MAX_ADJUSTABLES];
   uint8_t selectedTune_ = MAX_ADJUSTABLES; //none selected
 
-  ControlState ctrlState_;
-  TaskHandle_t imuTaskHandle_ = nullptr;
+  SharedState* sharedState_;
 
 public:
   Controller(String version);
@@ -55,7 +42,7 @@ public:
 
   void addAdjustable(float* adjustable, const String& name);
 
-  void setup(DynamicsBase*, DriveManager*, AlfredoCRSF* crsf);
+  void setup(SharedState*, AlfredoCRSF* crsf);
   void loop();
   void disable(String reason = "");
 
@@ -64,20 +51,13 @@ public:
   CPeer* armActivate(uint8_t peeridx);
 
   MotionControl getCrsfCtrl(uint32_t now) const;
-  uint8_t getValidDriveCount() const;
   void resetPids();
-  static bool quaternionToRotationMatrix(const float q[4], float r[3][3]);
-  Madgwick* getImuFilter() { return &imuFilt_; }
   bool isCrsfActive() const;
   AlfredoCRSF* getCrsf() { return crsf_; }
   bool getEnabled() const { return enabled_; }
-  Telem* getTelem() { return &telem_; }
   DisplayHandler* getDisplay() { return &display_; }
-  MotorDrive* const* getDrives() const;
-  uint8_t getDriveCount() const;
   behavior::Manager& getBehaviorMgr() { return behaviors_; }
   behavior::Control getControl(uint32_t now);
-  const ControlState& getCtrlState() const { return ctrlState_; }
 
   void send(Cmds cmd, CPeer const* peer, const uint8_t* pyld = nullptr, uint8_t len = 0);
   void broadcast(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0);

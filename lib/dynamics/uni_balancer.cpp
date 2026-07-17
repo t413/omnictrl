@@ -1,23 +1,23 @@
 #include "uni_balancer.h"
 #include <log.h>
 #include <multimotor/motordrive.h>
-#include <controller.h>
+#include <motiontask.h>
 #include <utils.h>
 
-UniBalancer::UniBalancer(Controller* ctrl) : DynamicsBase(ctrl) { }
+UniBalancer::UniBalancer(MotionTask* ctrl) : DynamicsBase(ctrl) { }
 
 void UniBalancer::init() {
-  ctrl_->addAdjustable(&balCtrl_.P, "b.P");
-  ctrl_->addAdjustable(&balCtrl_.I, "b.I");
-  ctrl_->addAdjustable(&balCtrl_.D, "b.D");
-  ctrl_->addAdjustable(&balCtrl_.rampLimit, "b.Rl");
-  ctrl_->addAdjustable(&speedCtrl_.P, "spd.P");
-  ctrl_->addAdjustable(&speedCtrl_.I, "spd.I");
-  ctrl_->addAdjustable(&speedCtrl_.D, "spd.D");
-  ctrl_->addAdjustable(&speedCtrl_.rampLimit, "spd.Rl");
+  ctx_->addAdjustable(&balCtrl_.P, "b.P");
+  ctx_->addAdjustable(&balCtrl_.I, "b.I");
+  ctx_->addAdjustable(&balCtrl_.D, "b.D");
+  ctx_->addAdjustable(&balCtrl_.rampLimit, "b.Rl");
+  ctx_->addAdjustable(&speedCtrl_.P, "spd.P");
+  ctx_->addAdjustable(&speedCtrl_.I, "spd.I");
+  ctx_->addAdjustable(&speedCtrl_.D, "spd.D");
+  ctx_->addAdjustable(&speedCtrl_.rampLimit, "spd.Rl");
 
-  auto drives = ctrl_->getDrives();
-  auto dcount = ctrl_->getDriveCount();
+  auto drives = ctx_->getDrives();
+  auto dcount = ctx_->getDriveCount(false);
   for (uint8_t i = 0; i < dcount; i++) {
     if (drives[i])
       drives[i]->setMode(MotorMode::Disabled); // start with disabled mode
@@ -25,28 +25,27 @@ void UniBalancer::init() {
 }
 
 MotorDrive* UniBalancer::getMotor() {
-  auto drives = ctrl_->getDrives();
+  auto drives = ctx_->getDrives();
   return drives[0];
 }
 
 void UniBalancer::enable(bool en) {
   resetPids();
-  auto drives = ctrl_->getDrives();
-  auto dcount = ctrl_->getDriveCount();
+  auto drives = ctx_->getDrives();
+  auto dcount = ctx_->getDriveCount(false);
   for (uint8_t i = 0; i < dcount; i++)
     if (drives[i])
       drives[i]->setMode(en? MotorMode::Current : MotorMode::Disabled);
 }
 
-void UniBalancer::iterate(uint32_t now, const behavior::Control& control, Madgwick& imu, DriveManager& dm) {
+void UniBalancer::iterate(uint32_t now, SharedState& state, DriveManager& dm) {
   auto motor = getMotor();
-  auto& motion = control.m;
+  auto& motion = state.activeCmd.m;
   bool enabled = motion.state > 0;
-  auto telem = ctrl_->getTelem();
+  auto& telem = state.telem;
   const auto mstate = motor? motor->getMotorState() : MotorState();
 
-  float pitchFwd = imu.getPitchDegree();
-  bool isUpOnEnd = abs(pitchFwd) < MAX_TILT; //more tilt allowed when balancing
+  bool isUpOnEnd = abs(state.pitchDeg) < MAX_TILT; //more tilt allowed when balancing
 
   //main control loop
   if (!motor) { status_ = "no motor"; return; }
@@ -60,9 +59,9 @@ void UniBalancer::iterate(uint32_t now, const behavior::Control& control, Madgwi
     // Blend between angle-control and odometry speed control
     const uint32_t balanceChangeDuration = 2000; //ms
     float pitchGoal = balanceModeSpeed? speedCtrl_.update(now, fwdSpeed_ - fwd) : -fwd;
-    float torqueCmd = balCtrl_.update(now, pitchGoal - pitchFwd); //input is angle
+    float torqueCmd = balCtrl_.update(now, pitchGoal - state.pitchDeg); //input is angle
     torqueCmd *= 10.0; //roughly scale to Nm
-    D_LOG("(fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> torque %06.2f", fwd, pitchGoal, pitchFwd, torqueCmd);
+    D_LOG("(fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> torque %06.2f", fwd, pitchGoal, state.pitchDeg, torqueCmd);
 
     motor->setSetpoint(MotorMode::Current, torqueCmd);
   } else {
@@ -70,7 +69,7 @@ void UniBalancer::iterate(uint32_t now, const behavior::Control& control, Madgwi
     balCtrl_.reset();
   }
 
-  telem->pitch = pitchFwd; //save for next loop
+  telem.pitch = state.pitchDeg; //save for next loop
 }
 
 void UniBalancer::resetPids() {
