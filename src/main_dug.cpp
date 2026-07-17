@@ -12,10 +12,11 @@ CyberGearDriver mot_back(0x7D, &twaiInterface_);
 CyberGearDriver mot_right(0x7E, &twaiInterface_);
 CyberGearDriver mot_left(0x7F, &twaiInterface_);
 
-#define PIN_CRSF_RX 5
-#define PIN_CRSF_TX 6
-#define PIN_CAN_RX 1
-#define PIN_CAN_TX 2
+constexpr int PIN_CRSF_RX  = 5;
+constexpr int PIN_CRSF_TX  = 6;
+//PIN_LEDS is set in .ini
+constexpr int PIN_CAN_RX  = 1;
+constexpr int PIN_CAN_TX  = 2;
 
 #define LOW_BATTERY_VOLTAGE 21.0
 

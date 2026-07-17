@@ -4,6 +4,7 @@
 #include "displayhandler.h"
 #include "behavior.h"
 #include <peers.h>
+#include <leds.h>
 #include <WString.h>
 #include <MadgwickAHRS.h>
 
@@ -24,11 +25,13 @@ class Controller {
   behavior::Manager behaviors_;
   int8_t lastBehaviorIdx_ = -1;
   PeerMgr<MotionControl> peerMgr_;
+  leds::LedRig leds_;
 
   AlfredoCRSF* crsf_ = nullptr;
   bool enabled_ = false;
   Madgwick imuFilt_;
   float gyroScale_ = 1.0;
+  float accelX_ = 0.0f, accelY_ = 0.0f; // lateral/fwd from IMU, normalized ~[-1,1]
   int lastchan8_ = 0;
 
   Telem telem_;
@@ -75,6 +78,7 @@ public:
   void handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len);
 
   void drawLCD(const uint32_t);
+  void drawLEDs(const uint32_t now);
   bool updateIMU();
   const String version_;
   float lowVoltageCutoff_ = 21.0; //6S 3.5V/cell

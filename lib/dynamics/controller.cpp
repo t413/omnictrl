@@ -100,6 +100,7 @@ void Controller::setup(DynamicsBase* dynamics, DriveManager* mgr, AlfredoCRSF* c
     D_LOG("finished setup");
 
   delay(100);
+  leds_.setup();
 }
 
 bool Controller::isCrsfActive() const {
@@ -420,6 +421,7 @@ void Controller::loop() {
 
   if ((now - lastDraw) > 60 || display_.isRedrawRequired()) {
     drawLCD(now);
+    drawLEDs(now);
     lastDraw = now;
   }
 
@@ -436,8 +438,27 @@ bool Controller::updateIMU() {
   auto data = M5.Imu.getImuData(); //no mag data it seems, sadly
   gyroZ = -data.gyro.z;
   imuFilt_.updateIMU<0,'D'>(-data.gyro.y * gyroScale_, -data.gyro.x * gyroScale_, -data.gyro.z, data.accel.y, data.accel.x, data.accel.z); //acc x/y are swapped
+  accelX_ = constrain(data.accel.x / 10.0f, -1.0f, 1.0f); // side tilt
+  accelY_ = constrain(data.accel.y / 10.0f, -1.0f, 1.0f); // fwd/back
 #endif
   return true;
+}
+
+void Controller::drawLEDs(const uint32_t now) {
+  auto aidx = peerMgr_.getActiveIdx();
+  auto active = peerMgr_.findPeer(aidx);
+  float energy = active? fabsf(active->lastCmd_.fwd) + fabsf(active->lastCmd_.yaw) : 0.0f;
+  energy = constrain(energy / 1.5f, 0.0f, 1.0f);
+  leds_.update(now, accelX_, accelY_, dynamics_? dynamics_->isBalancing() : false, energy);
+
+  // Simple behavior → color+fire mapping
+  switch (behaviors_.activeIdx_) {
+    case 0: leds_.setMoodColor(CRGB::Cyan);    leds_.setFireMode(false); break; // Happy
+    case 1: leds_.setMoodColor(CRGB::Yellow);  leds_.setFireMode(false); break; // Excited
+    case 2: leds_.setMoodColor(CRGB::Red);     leds_.setFireMode(true);  break; // Scared
+    case 3: leds_.setMoodColor(CRGB::Purple);  leds_.setFireMode(false); break; // Drunk
+    default: leds_.setMoodColor(CRGB(0x2b65c9));  leds_.setFireMode(false); // #0x2b65c9
+  }
 }
 
 void Controller::drawLCD(const uint32_t now) {
