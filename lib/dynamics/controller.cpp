@@ -210,7 +210,7 @@ CPeer* Controller::armActivate(uint8_t peeridx) {
   if (ret) { //arming
     const auto& m = ret->lastCmd_;
     for (float f : {m.fwd, m.side, m.yaw}) {
-      if (abs(f) > 0.06) {
+      if (abs(f) > 0.4) {
         D_LOG("arm-activate SAFETY CHECK FAIL (peer[%d])", peeridx);
         sendInfoStr("center ctrls", ret);
         return nullptr;

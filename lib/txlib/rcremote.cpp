@@ -126,7 +126,7 @@ void RCRemote::setArmState(bool arm) {
     return;
   if (arm) { //
     for (float f : {lastMotion_.fwd, lastMotion_.side, lastMotion_.yaw}) {
-      if (abs(f) > 0.05) {
+      if (abs(f) > 0.4) {
         infoDisp_ = "stick err";
         return;
       }
