@@ -21,9 +21,6 @@ void TriOmni::init() {
   ctrl_->addAdjustable(&balanceYawCtrl_.P, "b.yaw.P");
   ctrl_->addAdjustable(&balanceYawCtrl_.I, "b.yaw.I");
   ctrl_->addAdjustable(&balanceYawCtrl_.D, "b.yaw.D");
-  ctrl_->addAdjustable(&yawCtrl_.P, "yaw.P");
-  ctrl_->addAdjustable(&yawCtrl_.I, "yaw.I");
-  ctrl_->addAdjustable(&yawCtrl_.D, "yaw.D");
 
   auto drives = ctrl_->getDrives();
   auto dcount = ctrl_->getDriveCount();
@@ -96,8 +93,7 @@ void TriOmni::iterate(uint32_t now, const behavior::Control& control, Madgwick& 
     m.side += control.d_side;
     m.yaw  += control.d_yaw;
 
-    yawCtrl_.limit = m.maxSpeed / 4;
-    float y = yawCtrlEnabled_? yawCtrl_.update(now, (-m.yaw * 100) - ctrl_->getCtrlState().gyroZ) : -m.yaw; //convert yaw to angular rate
+    float y = -m.yaw; //convert yaw to angular rate
 
     #define BACK 0
     #define RGHT 1
@@ -162,7 +158,6 @@ void TriOmni::iterate(uint32_t now, const behavior::Control& control, Madgwick& 
 }
 
 void TriOmni::resetPids() {
-  yawCtrl_.reset();
   balanceCtrl_.reset();
   balanceSpeedCtrl_.reset();
   balanceYawCtrl_.reset();

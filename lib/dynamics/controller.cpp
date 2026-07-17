@@ -71,8 +71,8 @@ void imuControlTask(void* arg) {
       portEXIT_CRITICAL(&ctrl->ctrlState_.lock);
 
       if (ctrl->dynamics_ && ctrl->driveManager_) { // Update dynamics (PIDs, writes to can bus)
-        ctrl->dynamics_->iterate(now / 1000, cmd, ctrl->imuFilt_, *ctrl->driveManager_); // convert µs to ms
         ctrl->driveManager_->iterate(now / 1000);
+        ctrl->dynamics_->iterate(now / 1000, cmd, ctrl->imuFilt_, *ctrl->driveManager_); // convert µs to ms
       }
 
       // 6. Write IMU state back for main thread
