@@ -98,7 +98,7 @@ void TriOmni::iterate(uint32_t now) {
     m.yaw  += control.d_yaw;
 
     yawCtrl_.limit = m.maxSpeed / 4;
-    float y = yawCtrlEnabled_? yawCtrl_.update(now, (-m.yaw * 100) - ctrl_->gyroZ) : -m.yaw; //convert yaw to angular rate
+    float y = yawCtrlEnabled_? yawCtrl_.update(now, (-m.yaw * 100) - ctrl_->getCtrlState().gyroZ) : -m.yaw; //convert yaw to angular rate
 
     #define BACK 0
     #define RGHT 1

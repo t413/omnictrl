@@ -16,7 +16,12 @@ class MotorDrive;
 class DriveManager;
 
 typedef Peer<MotionControl> CPeer;
-
+struct ControlState {
+  float gyroZ = 0.0f, accelX = 0.0f, accelY = 0.0f;
+  uint32_t timestamp = 0;
+  MotionControl activeCmd = {};
+  portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
+};
 extern const uint8_t* PEER_CRSF_MAC;
 
 class Controller {
@@ -31,7 +36,6 @@ class Controller {
   bool enabled_ = false;
   Madgwick imuFilt_;
   float gyroScale_ = 1.0;
-  float accelX_ = 0.0f, accelY_ = 0.0f; // lateral/fwd from IMU, normalized ~[-1,1]
   int lastchan8_ = 0;
 
   Telem telem_;
@@ -40,8 +44,10 @@ class Controller {
   static const uint8_t MAX_ADJUSTABLES = 15;
   float* adjustables_[MAX_ADJUSTABLES] = {0};
   String adjNames_[MAX_ADJUSTABLES];
-
   uint8_t selectedTune_ = MAX_ADJUSTABLES; //none selected
+
+  ControlState ctrlState_;
+  TaskHandle_t imuTaskHandle_ = nullptr;
 
 public:
   Controller(String version);
@@ -71,6 +77,7 @@ public:
   uint8_t getDriveCount() const;
   behavior::Manager& getBehaviorMgr() { return behaviors_; }
   behavior::Control getControl(uint32_t now);
+  const ControlState& getCtrlState() const { return ctrlState_; }
 
   void send(Cmds cmd, CPeer const* peer, const uint8_t* pyld = nullptr, uint8_t len = 0);
   void broadcast(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0);
@@ -79,8 +86,7 @@ public:
 
   void drawLCD(const uint32_t);
   void drawLEDs(const uint32_t now);
-  bool updateIMU();
   const String version_;
   float lowVoltageCutoff_ = 21.0; //6S 3.5V/cell
-  float gyroZ = 0.0f; //updated by IMU
+  friend void imuControlTask(void* arg);
 };

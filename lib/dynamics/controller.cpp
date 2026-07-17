@@ -14,7 +14,7 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-constexpr uint32_t IMU_UPDATE_PERIOD = 20; //ms
+constexpr uint32_t IMU_UPDATE_PERIOD = 10; //ms
 const uint8_t* PEER_CRSF_MAC = BROADCAST_ADDRESS;
 
 constexpr uint8_t PKT_SUBT = (uint8_t) Subt::Robot;
@@ -34,9 +34,7 @@ bool canPrint() {
 Controller::~Controller() { }
 
 Controller::Controller(String version) :
-        version_(version) {
-  imuFilt_.setFrequency(1000 / IMU_UPDATE_PERIOD); //50Hz, 20ms
-}
+        version_(version) { }
 
 static Controller* controller_ = nullptr;
 
@@ -49,6 +47,49 @@ void Controller::addAdjustable(float* adjustable, const String& name) {
     }
   }
   D_LOG("No space for new adjustable");
+}
+
+void imuControlTask(void* arg) {
+  Controller* ctrl = (Controller*)arg;
+  uint32_t lastRun = micros();
+  constexpr uint32_t PERIOD_US = IMU_UPDATE_PERIOD * 1000;
+
+  while (1) {
+    uint32_t now = micros();
+    if (now - lastRun >= PERIOD_US) {
+      if (!M5.Imu.isEnabled()) {
+        delayMicroseconds(100);
+        continue;
+      }
+      M5.Imu.update();
+      auto data = M5.Imu.getImuData();
+
+      ctrl->imuFilt_.updateIMU<0,'D'>(-data.gyro.y * ctrl->gyroScale_, -data.gyro.x * ctrl->gyroScale_, -data.gyro.z, data.accel.y, data.accel.x, data.accel.z); //acc x/y are swapped
+
+      portENTER_CRITICAL(&ctrl->ctrlState_.lock);
+      MotionControl cmd = ctrl->ctrlState_.activeCmd; // get latest setpoint from main thread
+      portEXIT_CRITICAL(&ctrl->ctrlState_.lock);
+
+      if (ctrl->dynamics_) { // Update dynamics (PIDs, writes to can bus)
+        ctrl->dynamics_->iterate(now / 1000); // convert µs to ms
+      }
+
+      if (ctrl->driveManager_) { // process incoming can messages
+        ctrl->driveManager_->iterate(now / 1000);
+      }
+
+      // 6. Write IMU state back for main thread
+      portENTER_CRITICAL(&ctrl->ctrlState_.lock);
+      ctrl->ctrlState_.gyroZ = -data.gyro.z;
+      ctrl->ctrlState_.accelX = constrain(data.accel.x / 10.0f, -1.0f, 1.0f);
+      ctrl->ctrlState_.accelY = constrain(data.accel.y / 10.0f, -1.0f, 1.0f);
+      ctrl->ctrlState_.timestamp = now / 1000;
+      portEXIT_CRITICAL(&ctrl->ctrlState_.lock);
+
+      lastRun = now;
+    }
+    delayMicroseconds(100);
+  }
 }
 
 void Controller::setup(DynamicsBase* dynamics, DriveManager* mgr, AlfredoCRSF* crsf) {
@@ -81,7 +122,6 @@ void Controller::setup(DynamicsBase* dynamics, DriveManager* mgr, AlfredoCRSF* c
   });
   espnowRegisterMac(BROADCAST_ADDRESS);
 
-#ifdef IS_M5
   M5.begin();
   //check if has lcd
   if (M5.Lcd.width() > 0) {
@@ -91,15 +131,15 @@ void Controller::setup(DynamicsBase* dynamics, DriveManager* mgr, AlfredoCRSF* c
   M5.Power.begin();
   if (M5.Imu.isEnabled()) {
     M5.Imu.loadOffsetFromNVS();
-    // M5.Imu.setAxisOrderRightHanded( ??
-    imuFilt_.setFrequency(50); //50Hz, 20ms
+    imuFilt_.setFrequency(1000.0f / IMU_UPDATE_PERIOD); //Hz
   }
-#endif
 
   if (canPrint())
     D_LOG("finished setup");
 
   delay(100);
+  D_LOG("starting imu task");
+  xTaskCreatePinnedToCore(imuControlTask, "IMUCtrl", 4096, this, 3, &imuTaskHandle_, 0);
   leds_.setup();
 }
 
@@ -273,7 +313,6 @@ uint32_t lastDrive = 1000;
 uint32_t lastPollStats = 0;
 uint32_t lastRefreshDrives = 0;
 uint32_t lastTxStats = 0;
-uint32_t lastClear = 0;
 
 void Controller::loop() {
   uint32_t now = millis();
@@ -356,9 +395,7 @@ void Controller::loop() {
   }
 
   if ((now - lastDrive) > IMU_UPDATE_PERIOD) {
-    updateIMU();
-    now = millis(); //re-up
-
+    // IMU reading, dynamics iterate, drive iterate now done in separate thread in imuControlTask
     //control inputs
     bool arm = enabled_;
 
@@ -411,9 +448,10 @@ void Controller::loop() {
         dynamics_->enable(arm); //changed state, notify
     }
     enabled_ = arm;
-    if (dynamics_) {
-      dynamics_->iterate(now);
-    }
+
+    portENTER_CRITICAL(&ctrlState_.lock);
+    ctrlState_.activeCmd = active? active->lastCmd_ : MotionControl(); //write for the controll thread to read
+    portEXIT_CRITICAL(&ctrlState_.lock);
 
     lastDrive = now;
     lastRefreshDrives = now; //keep drive refresh in sync with this task
@@ -427,21 +465,6 @@ void Controller::loop() {
 
   if (crsf_)
     crsf_->update();
-
-  driveManager_->iterate(now);
-}
-
-bool Controller::updateIMU() {
-#ifdef IS_M5
-  auto res = M5.Imu.isEnabled()? M5.Imu.update() : 0;
-  if (!res) return false;
-  auto data = M5.Imu.getImuData(); //no mag data it seems, sadly
-  gyroZ = -data.gyro.z;
-  imuFilt_.updateIMU<0,'D'>(-data.gyro.y * gyroScale_, -data.gyro.x * gyroScale_, -data.gyro.z, data.accel.y, data.accel.x, data.accel.z); //acc x/y are swapped
-  accelX_ = constrain(data.accel.x / 10.0f, -1.0f, 1.0f); // side tilt
-  accelY_ = constrain(data.accel.y / 10.0f, -1.0f, 1.0f); // fwd/back
-#endif
-  return true;
 }
 
 void Controller::drawLEDs(const uint32_t now) {
@@ -449,7 +472,11 @@ void Controller::drawLEDs(const uint32_t now) {
   auto active = peerMgr_.findPeer(aidx);
   float energy = active? fabsf(active->lastCmd_.fwd) + fabsf(active->lastCmd_.yaw) : 0.0f;
   energy = constrain(energy / 1.5f, 0.0f, 1.0f);
-  leds_.update(now, accelX_, accelY_, dynamics_? dynamics_->isBalancing() : false, energy);
+  portENTER_CRITICAL(&ctrlState_.lock);
+  float ax = ctrlState_.accelX;
+  float ay = ctrlState_.accelY;
+  portEXIT_CRITICAL(&ctrlState_.lock);
+  leds_.update(now, ax, ay, dynamics_? dynamics_->isBalancing() : false, energy);
 
   // Simple behavior → color+fire mapping
   switch (behaviors_.activeIdx_) {
