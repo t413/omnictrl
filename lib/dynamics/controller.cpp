@@ -475,16 +475,17 @@ void Controller::drawLEDs(const uint32_t now) {
   portENTER_CRITICAL(&ctrlState_.lock);
   float ax = ctrlState_.accelX;
   float ay = ctrlState_.accelY;
+  float az = ctrlState_.accelZ;
   portEXIT_CRITICAL(&ctrlState_.lock);
-  leds_.update(now, ax, ay, dynamics_? dynamics_->isBalancing() : false, energy);
+  leds_.update(now, ax, ay, az);
 
   // Simple behavior → color+fire mapping
   switch (behaviors_.activeIdx_) {
-    case 0: leds_.setMoodColor(CRGB::Cyan);    leds_.setFireMode(false); break; // Happy
-    case 1: leds_.setMoodColor(CRGB::Yellow);  leds_.setFireMode(false); break; // Excited
-    case 2: leds_.setMoodColor(CRGB::Red);     leds_.setFireMode(true);  break; // Scared
-    case 3: leds_.setMoodColor(CRGB::Purple);  leds_.setFireMode(false); break; // Drunk
-    default: leds_.setMoodColor(CRGB(0x2b65c9));  leds_.setFireMode(false); // #0x2b65c9
+    case 0: leds_.set(CRGB::Cyan, CRGB::Green4, leds::EyeShape::Circle); break; // Happy
+    case 1: leds_.set(CRGB::Yellow, CRGB::Orange3, leds::EyeShape::Heart); break; // Excited
+    case 2: leds_.set(CRGB::Red, CRGB::Yellow2, leds::EyeShape::Circle);  break; // Scared
+    case 3: leds_.set(CRGB::Purple, CRGB::Blue3, leds::EyeShape::Heart); break; // Drunk
+    default: leds_.set(CRGB(0x2b65c9), CRGB(0xD02090), leds::EyeShape::Circle); // #2b65c9 #D02090
   }
 }
 
