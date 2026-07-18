@@ -258,7 +258,6 @@ private:
 class LedRig {
   CRGB leds_[NUM_PANELS * PANEL_LEDS];
   Eye eyeL_, eyeR_;
-  FluidPanel eyeBg_;         // dual-panel mode, spans both eye buffers
   FluidPanel sideL_, sideR_; // single-panel each
   uint32_t lastUpdate_ = 0;
 
@@ -275,9 +274,6 @@ public:
     eyeR_.setBuffer(&leds_[2 * PANEL_LEDS]);
     eyeL_.setBuffer(&leds_[3 * PANEL_LEDS]);
 
-    eyeBg_.setBuffers(&leds_[2 * PANEL_LEDS], Orientation(), &leds_[3 * PANEL_LEDS], Orientation());
-    eyeBg_.setFade(64);
-
     nextBlinkTime_ = millis() + random(2000, 6000);
 
     D_LOG("%dx leds set up on pin %d", FastLED.size(), PIN_LEDS);
@@ -290,6 +286,7 @@ public:
   // for your mounting - flip the sign on the az terms below.
   void update(uint32_t now, float ax, float ay, float az) {
     uint32_t dt = lastUpdate_ ? (now - lastUpdate_) : 20;
+    FastLED.clear();
 
     eyeL_.update(now); eyeR_.update(now);
 
@@ -298,11 +295,9 @@ public:
       nextBlinkTime_ = now + random(2000, 6000);
     }
 
-    eyeBg_.update(ay, az, dt);
     sideL_.update(ax, az, dt);
     sideR_.update(ax, az, dt);
 
-    eyeBg_.render();
     eyeL_.render(); eyeR_.render();
     sideL_.render(); sideR_.render();
 
@@ -317,7 +312,6 @@ public:
 
   void setMoodColor(CRGB c, CRGB c2) {
     eyeL_.setColor(c); eyeR_.setColor(c);
-    eyeBg_.setColor(c2);
     sideL_.setColor(c); sideR_.setColor(c);
   }
   void setEyeShape(EyeShape s) { eyeL_.setShape(s); eyeR_.setShape(s); }
