@@ -9,6 +9,10 @@
 
 TriOmni::TriOmni(MotionTask* ctrl) : DynamicsBase(ctrl) { }
 
+constexpr uint8_t BACK = 0;
+constexpr uint8_t RGHT = 1;
+constexpr uint8_t LEFT = 2;
+
 void TriOmni::init() {
   ctx_->addAdjustable(&balanceCtrl_.P, "b.P");
   ctx_->addAdjustable(&balanceCtrl_.I, "b.I");
@@ -39,7 +43,14 @@ void TriOmni::enable(bool en) {
       drives[i]->setMode(en? MotorMode::Speed : MotorMode::Disabled);
 }
 
-void TriOmni::iterate(uint32_t now, SharedState& state, DriveManager& dm) {
+void TriOmni::calcBalanceSpeeds(const SharedState& state, float& fwd, float& yaw) {
+  float vr = state.motorStates[RGHT].velocity;
+  float vl = state.motorStates[LEFT].velocity;
+  fwd = (vr - vl) / 2.0f; // right minus left, averaged
+  yaw = (vr + vl) / 2.0f; // average rotation contribution
+}
+
+void TriOmni::iterate(uint32_t now, const SharedState& state, DriveManager& dm) {
   auto drives = dm.getDrives();
   auto dcount = dm.getCount();
   auto m = state.activeCmd.m;
@@ -49,6 +60,7 @@ void TriOmni::iterate(uint32_t now, SharedState& state, DriveManager& dm) {
   MotionTask::quaternionToRotationMatrix(state.q, R);
 
   float pitchFwd = (atan2(-R[2][0], R[2][2]) + PI / 2) * 180.0 / PI;
+  pitchFwd_ = pitchFwd;
   bool isUpOnEnd = abs(pitchFwd) < MAX_TILT; //more tilt allowed when balancing
   bool newbalance = isBalancing_ || isUpOnEnd;
   bool balanceModeSpeed = false;
@@ -88,32 +100,19 @@ void TriOmni::iterate(uint32_t now, SharedState& state, DriveManager& dm) {
 
     float y = -m.yaw; //convert yaw to angular rate
 
-    #define BACK 0
-    #define RGHT 1
-    #define LEFT 2
-
-    fwdSpeed_ = yawSpeed_ = 0;
-    for (uint8_t i = 0; i < dcount; i++) {
-      if (!drives[i]) continue;
-      float v = drives[i]->getMotorState().velocity;
-      if (i != BACK) {
-        fwdSpeed_ += v * (i == RGHT? 1 : -1); //left is positive, right is negative
-        yawSpeed_ += v;
-      }
-    }
-    fwdSpeed_ /= 2;
-    yawSpeed_ /= 2;
-
     if (lastBalanceChange_ == now) {
       for (uint8_t d = 0; d < dcount; d++)
         if (d != BACK && drives[d]) //back stays in speed mode
           drives[d]->setMode(isBalancing_? MotorMode::Current : MotorMode::Speed);
     }
 
+    float vfwd = 0, vyaw = 0;
+    calcBalanceSpeeds(state, vfwd, vyaw);
     if (isBalancing_) {
+
       // Blend between angle-control and odometry speed control
       const uint32_t balanceChangeDuration = 2000; //ms
-      float pitchGoal = balanceModeSpeed? balanceSpeedCtrl_.update(now, fwdSpeed_ - m.fwd) : -m.fwd;
+      float pitchGoal = balanceModeSpeed? balanceSpeedCtrl_.update(now, vfwd - m.fwd) : -m.fwd;
       pitchGoal += state.activeCmd.pitchOffsetDeg;
       if (balanceModeSpeed && (now - lastBalanceChange_) < balanceChangeDuration) {
         const float blendT = (now - lastBalanceChange_) / (float)balanceChangeDuration;
@@ -123,26 +122,32 @@ void TriOmni::iterate(uint32_t now, SharedState& state, DriveManager& dm) {
       }
       float torqueCmd = balanceCtrl_.update(now, pitchGoal - pitchFwd); //input is angle
       torqueCmd *= 10.0; //roughly scale to Nm
-      D_LOG("(fwd %06.2f)-> [-pgoal %06.2f -p %06.2f] -> torque %06.2f", m.fwd, pitchGoal, pitchFwd, torqueCmd);
       m.fwd = torqueCmd; // Use torque output directly
 
-      y = balanceYawCtrl_.update(now, (y + -m.side) - yawSpeed_); //input is speed, output is torque
+      y = balanceYawCtrl_.update(now, (y + -m.side) - vyaw); //input is speed, output is torque
       m.side = 0; //disable side
+      D_LOG("(fwd %06.2f vfwd%06.2f)-> [-pgoal %06.2f -p %06.2f] vyaw(%06.2f) -> %06.2f ch6(%d)",
+        m.fwd, vfwd, pitchGoal, pitchFwd, vyaw, y, state.crsfChans[6]);
     } else {
       balanceSpeedCtrl_.reset();
       balanceCtrl_.reset();
     }
     if (enabled) {
       //TODO check each drive pointer
-      drives[BACK]->setSetpoint(MotorMode::Speed, isBalancing_? yawSpeed_ : (y  +   0   + m.side));
+      drives[BACK]->setSetpoint(MotorMode::Speed, isBalancing_? vyaw : (y  +   0   + m.side));
       drives[LEFT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  - m.fwd   - m.side * 1.33/2);
       drives[RGHT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  + m.fwd   - m.side * 1.33/2);
     }
+
   } //drive count check
 
   status_ = isBalancing_? "woah." : enabled? "wee!" : ":|";
+}
 
-  state.dispRotate = (isBalancing_ || (abs(pitchFwd) < MAX_TILT)) ? 0 : 2;
+void TriOmni::updateState(uint32_t now, SharedState& state) {
+  state.isBalancing = isBalancing_;
+  state.dispRotate = (isBalancing_ || (abs(pitchFwd_) < MAX_TILT)) ? 0 : 2;
+  state.title = status_;
 }
 
 void TriOmni::resetPids() {

@@ -12,7 +12,6 @@
 #include <esp_now.h>
 #include <WiFi.h>
 
-constexpr uint32_t IMU_UPDATE_PERIOD = 10; //ms
 const uint8_t* PEER_CRSF_MAC = BROADCAST_ADDRESS;
 
 constexpr uint8_t PKT_SUBT = (uint8_t) Subt::Robot;
@@ -216,7 +215,8 @@ void Controller::loop() {
   uint32_t now = millis();
 
   if (((now - lastTxStats) > 100)) {
-    auto telem = sharedState_->getCopy().telem;
+    auto statecpy = sharedState_->getCopy();
+    auto telem = statecpy.telem;
     if (crsf_ && crsf_->isLinkUp()) {
       crsf_sensor_battery_t crsfBatt = {
         .voltage = htobe16((uint16_t)(telem.vbus * 10.0)),
@@ -322,7 +322,7 @@ void Controller::loop() {
     sharedState_->activeCmd = control; //write for the controll thread to read
     sharedState_->crsfActive = isCrsfActive();
     for (uint8_t c = 0; c < CRSF_CHANS; c++)
-      sharedState_->crsfChans[c] = crsf_->getChannel(CRSF_CHANS);
+      sharedState_->crsfChans[c] = crsf_->getChannel(c);
     auto rot = sharedState_->dispRotate;
     portEXIT_CRITICAL(&sharedState_->lock);
     display_.setRotation(rot);

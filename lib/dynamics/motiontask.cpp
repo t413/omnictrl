@@ -3,26 +3,34 @@
 #include <log.h>
 #include <dynamics_base.h>
 #include <multimotor/drive_manager.h>
-#include <multimotor/motordrive.h>
 #include <multimotor/can/cybergear.h>
 #include <Arduino.h>
 #include <M5Unified.h>
 
-constexpr uint32_t IMU_UPDATE_PERIOD = 10; //ms
-constexpr uint32_t FETCH_UPDATE_PERIOD = 40; //ms
-constexpr uint32_t POLL_STATS_UPDATE_PERIOD = 200; //ms
 
 void imuControlTask(void* arg) {
   MotionTask* ctx = (MotionTask*)arg;
-  uint32_t lastRun = millis();
-  uint32_t lastFetch = lastFetch;
-  uint32_t lastPollStats = lastFetch;
+  uint32_t nextFetch = millis() + IMU_UPDATE_PERIOD;
+  uint32_t nextUpdate = nextFetch + FETCH_OFFSET;
+  uint32_t nextPollStats = nextFetch - IMU_UPDATE_PERIOD / 2; //get started early
   bool enabled_ = false;
   uint32_t counter = 0;
 
   while (1) {
     uint32_t now = millis();
-    if (now - lastRun >= IMU_UPDATE_PERIOD) {
+    auto drives = ctx->getDrives();
+    auto dcount = ctx->driveManager_->getCount();
+
+    // run drives requestStatus() 2ms before the imu/pid/output update runs:
+    if ((int32_t)(now - nextFetch) >= 0) {
+      for (int i = 0; i < dcount; i++) {
+        if (!drives[i]) continue;
+        drives[i]->requestStatus();
+        ctx->driveManager_->readOnce(now, 180); //1megabaud / 8bytes -> 80micros
+      }
+      nextFetch = nextUpdate + IMU_UPDATE_PERIOD - FETCH_OFFSET; //keep in sync
+    }
+    if ((int32_t)(now - nextUpdate) >= 0) {
       if (!M5.Imu.isEnabled()) {
         delayMicroseconds(100);
         continue;
@@ -33,22 +41,21 @@ void imuControlTask(void* arg) {
       ctx->imuFilt_.updateIMU<0,'D'>(-data.gyro.y * ctx->gyroScale_, -data.gyro.x * ctx->gyroScale_, -data.gyro.z, data.accel.y, data.accel.x, data.accel.z); //acc x/y are swapped
 
       portENTER_CRITICAL(&ctx->state_.lock);
-      auto state = ctx->state_; // get latest data from main thread
+      ctx->imuFilt_.getQuaternion(ctx->state_.q);
+      ctx->state_.gyroZ = -data.gyro.z;
+      ctx->state_.accelX = data.accel.x;
+      ctx->state_.accelY = data.accel.y;
+      ctx->state_.accelZ = data.accel.z;
+      ctx->state_.pitchDeg = ctx->imuFilt_.getPitchDegree();
+      ctx->state_.timestamp = now;
+      auto statecpy = ctx->state_; // get latest data from main thread
       portEXIT_CRITICAL(&ctx->state_.lock);
 
-      ctx->imuFilt_.getQuaternion(state.q);
-      state.gyroZ = -data.gyro.z;
-      state.accelX = data.accel.x;
-      state.accelY = data.accel.y;
-      state.accelZ = data.accel.z;
-      state.pitchDeg = ctx->imuFilt_.getPitchDegree();
-      ctx->state_.timestamp = now;
-
       if (ctx->dynamics_ && ctx->driveManager_) { // Update dynamics (PIDs, writes to can bus)
-        ctx->driveManager_->iterate(now); //handle incoming data
-        ctx->dynamics_->iterate(now, state, *ctx->driveManager_); // convert µs to ms
+        ctx->driveManager_->iterate(now, 0); //handle any other incoming data
+        ctx->dynamics_->iterate(now, statecpy, *ctx->driveManager_); // convert µs to ms
 
-        bool arm = state.getEnabled();
+        bool arm = statecpy.getEnabled();
         if ((arm != enabled_)) { //state chage detect
           ctx->dynamics_->enable(arm); //changed state, notify
           enabled_ = arm;
@@ -56,17 +63,23 @@ void imuControlTask(void* arg) {
       }
 
       portENTER_CRITICAL(&ctx->state_.lock);
-      ctx->state_ = state; // copy back into place
+      if (ctx->dynamics_) {
+        ctx->dynamics_->updateState(now, ctx->state_);
+      }
       portEXIT_CRITICAL(&ctx->state_.lock);
 
-      lastRun = now;
+      nextUpdate = now + IMU_UPDATE_PERIOD;
     }
-    if ((now - lastPollStats) > POLL_STATS_UPDATE_PERIOD) {
-      auto drives = ctx->getDrives();
-      auto dcount = ctx->getDriveCount();
+    if ((int32_t)(now - nextPollStats) >= 0) {
       auto statecpy = ctx->state_.getCopy();
       uint32_t latest = 0;
       float vbus = statecpy.telem.vbus;
+      for (int i = 0; i < dcount; i++) {
+        if (!drives[i]) continue;
+        drives[i]->fetchVBus();  // Also request VBUS parameter
+        ctx->driveManager_->readOnce(now, 180);
+      }
+
       for (int i = 0; i < dcount; i++) {
         if (!drives[i]) break;
         auto time = drives[i]->getLastStatusTime();
@@ -74,31 +87,29 @@ void imuControlTask(void* arg) {
         auto state = drives[i]->getMotorState();
         if (!statecpy.getEnabled() && state.mode != MotorMode::Disabled)
           drives[i]->setMode(MotorMode::Disabled); //should be disabled
-        drives[i]->fetchVBus();  // Also request VBUS parameter
         if ((now - time) > 200)
           continue;
         auto v = drives[i]->getVBus();
-        if (vbus < 0.1 && v > 0.1)
-          vbus = v; // initialize filtered VBUS
-        vbus = 0.9 * vbus + 0.1 * v; // simple low-pass filter
+        if (v > 0.9) { //has a value
+          if (vbus < 0.1 && v > 0.1)
+            vbus = v; // initialize filtered VBUS
+          vbus = 0.9 * vbus + 0.1 * v; // simple low-pass filter
+        }
       }
       portENTER_CRITICAL(&ctx->state_.lock);
       ctx->state_.telem.vbus = vbus;
       ctx->state_.telem.timestamp = latest;
       ctx->state_.validDriveCount = ctx->getDriveCount(true);
+      for (int i = 0; i < min(dcount, MOTORS_MAX); i++)
+        if (drives[i])
+          ctx->state_.motorStates[i] = drives[i]->getMotorState();
       portEXIT_CRITICAL(&ctx->state_.lock);
-      lastPollStats = now;
+      nextPollStats = now + POLL_STATS_UPDATE_PERIOD;
+      D_LOG("fetched %d, %d, msgs[0]: t%d v%0.1f [%0.1f,%0.1f,%0.1f]", dcount, counter % 32, latest, vbus, drives[0]->getVBus(), drives[1]->getVBus(), drives[2]->getVBus());
 
       counter++;
-      if ((now - lastFetch) > (FETCH_UPDATE_PERIOD)) {
-        for (int i = 0; i < dcount; i++) {
-          if (drives[i]) drives[i]->requestStatus();
-        }
-        D_LOG("fetched %d, %d, msgs[0]: t%d v%0.1f", dcount, counter % 32, latest, vbus);
-        lastFetch = now;
-      }
     }
-    delayMicroseconds(100);
+    delay(1);
   }
 }
 

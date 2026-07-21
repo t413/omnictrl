@@ -16,7 +16,8 @@ public:
 
   virtual void init() = 0;
   virtual void enable(bool) = 0;
-  virtual void iterate(uint32_t now, SharedState&, DriveManager&) = 0;
+  virtual void iterate(uint32_t now, const SharedState&, DriveManager&) = 0;
+  virtual void updateState(uint32_t now, SharedState&) { }
   virtual void resetPids() = 0;
   virtual String getStatus() const = 0;
   virtual bool isBalancing() const { return false; }

@@ -3,12 +3,19 @@
 #include <rfprotocol.h>
 #include <behavior.h>
 #include <FreeRTOS.h>
+#include <multimotor/motordrive.h>
 #include <MadgwickAHRS.h>
 
 class DriveManager;
 class DynamicsBase;
 class MotorDrive;
+
+constexpr uint32_t IMU_UPDATE_PERIOD = 20; //ms
+constexpr uint32_t FETCH_OFFSET = 3; //ms before IMU_UPDATE
+constexpr uint32_t POLL_STATS_UPDATE_PERIOD = 200; //ms
+
 constexpr uint8_t CRSF_CHANS = 10;
+constexpr uint8_t MOTORS_MAX = 4;
 
 struct SharedState {
   float gyroZ = 0.0f, accelX = 0.0f, accelY = 0.0f, accelZ = 0.0f, pitchDeg = 0.0f;;
@@ -23,6 +30,7 @@ struct SharedState {
   portMUX_TYPE lock = portMUX_INITIALIZER_UNLOCKED;
   Telem telem;
   String title;
+  MotorState motorStates[MOTORS_MAX]; //also vbus is in telem.vbus
 
   SharedState getCopy();
   bool getEnabled() const { return activeCmd.m.state > 0; }
