@@ -36,14 +36,13 @@ Controller::Controller(String version) :
 static Controller* controller_ = nullptr;
 
 void Controller::addAdjustable(float* adjustable, const String& name) {
-  for (int i = 0; i < MAX_ADJUSTABLES; i++) {
-    if (adjustables_[i] == nullptr) {
-      adjustables_[i] = adjustable;
-      adjNames_[i] = name;
-      return;
-    }
+  if (adjustablesCount_ >= MAX_ADJUSTABLES) {
+    D_LOG("No space for new adjustable");
+    return;
   }
-  D_LOG("No space for new adjustable");
+  adjustables_[adjustablesCount_].v = adjustable;
+  adjustables_[adjustablesCount_].name = name;
+  ++adjustablesCount_;
 }
 
 void Controller::setup(SharedState* shared, AlfredoCRSF* crsf) {
@@ -249,19 +248,14 @@ void Controller::loop() {
   M5.update(); //updates buttons, etc
   if (M5.BtnA.wasSingleClicked()) {
     if (enabled_) behaviors_.increment();
-    else if (selectedTune_ < MAX_ADJUSTABLES) selectedTune_ = MAX_ADJUSTABLES; //clear
+    else if (selectedTune_ < adjustablesCount_) adjustModeBump(true, true); //clear
     else sendInfoStr("poke");
   } else if (M5.BtnA.wasDoubleClicked()) {
-    selectedTune_ = (selectedTune_ + 1) % (MAX_ADJUSTABLES + 1); //+1 for disabled
-    if (selectedTune_ < MAX_ADJUSTABLES) {
-      sendInfoStr("adj:" + adjNames_[selectedTune_]);
-    } else {
-      sendInfoStr("adj-none");
-    }
-    display_.requestRedraw();
+    if (behaviors_.isActive()) behaviors_.clear();
+    else adjustModeBump();
   }
   #endif
-  float* tunable = selectedTune_ < MAX_ADJUSTABLES? adjustables_[selectedTune_] : NULL;
+  float* tunable = selectedTune_ < adjustablesCount_? adjustables_[selectedTune_].v : NULL;
 
   if ((now - lastUpdateTx) > IMU_UPDATE_PERIOD) {
     // IMU reading, dynamics iterate, drive iterate now done in separate thread in imuControlTask
@@ -293,16 +287,22 @@ void Controller::loop() {
       }
     }
 
-    if (peerMgr_.isActive(crsfIdx)) { //crsf control has extra features
+    if (crsfCtrl.timestamp) { //crsf control has extra features
+      bool adjBumpMode = selectedTune_ < adjustablesCount_;
       const auto chan8 = crsf_? crsf_->getChannel(8) : 0;
-      bool enableAdjustment = arm && crsf_ && (chan8 > 1900);
-      if (enableAdjustment && tunable) {
-        *tunable = pow(10, mapfloat(active->lastCmd_.adjust, 0, 1, -2, 2));
-        if (active->lastCmd_.adjust < 0.01) *tunable = 0; //allow 0 values
-      } else if (chan8 > 1500 && chan8 < 1900 && lastchan8_ < 1500) { //behavior bump
-        behaviors_.increment();
-      } else if (chan8 < 1100) {
-        behaviors_.clear();
+      if (chan8 > 1900) { //held rtl btn
+        if (adjBumpMode && tunable) {
+          *tunable = pow(10, mapfloat(crsfCtrl.adjust, 0, 1, -2, 2));
+          if (crsfCtrl.adjust < 0.01) *tunable = 0; //allow 0 values
+        } else {
+          behaviors_.clear();
+        }
+      } else if (chan8 > 1550 && lastchan8_ < 1550) { //bump up
+        if (adjBumpMode) adjustModeBump();
+        else behaviors_.increment();
+      } else if (chan8 < 1450 && lastchan8_ > 1450) { //bump down
+        if (adjBumpMode) adjustModeBump(false);
+        else behaviors_.increment(false);
       }
       lastchan8_ = chan8;
     } else if (active) {
@@ -312,7 +312,6 @@ void Controller::loop() {
     if ((arm != enabled_)) {
       // -- ENABLING, arming, whatever -- //
       display_.requestRedraw();
-      behaviors_.clear();
     }
     enabled_ = arm;
 
@@ -343,6 +342,19 @@ void Controller::loop() {
     crsf_->update();
 }
 
+void Controller::adjustModeBump(bool up, bool clear) {
+  selectedTune_ = clear? MAX_ADJUSTABLES : ((selectedTune_ + (up? 1 : -1)) % adjustablesCount_);
+  if (selectedTune_ < MAX_ADJUSTABLES) {
+    const auto& a = adjustables_[selectedTune_];
+    sendInfoStr("adj:" + a.name);
+    D_LOG("selected adjustable %d/%d: %s %0.01f: # %p", selectedTune_, adjustablesCount_, a.name, a.v? *a.v : -1, a.v);
+  } else {
+    sendInfoStr("adj-none");
+    D_LOG("clear adjustable %d/%d", selectedTune_, adjustablesCount_);
+  }
+  display_.requestRedraw();
+}
+
 void Controller::drawLEDs(const uint32_t now) {
   auto aidx = peerMgr_.getActiveIdx();
   auto active = peerMgr_.findPeer(aidx);
@@ -371,6 +383,7 @@ void Controller::drawLCD(const uint32_t now) {
   auto pageBG = BLACK;
   auto validCount = state.validDriveCount;
   auto linkCount = peerMgr_.getRecentCount(now, 1000);
+  Adj const* adj = (selectedTune_ < MAX_ADJUSTABLES)? &adjustables_[selectedTune_] : nullptr;
   String title = state.title;
   String err;
   if (state.telem.vbus > 0.1 && state.telem.vbus < lowVoltageCutoff_) err = "low batt!";
@@ -381,17 +394,28 @@ void Controller::drawLCD(const uint32_t now) {
     fg = WHITE;
     pageBG = SUPERDARKRED;
     bgRainbow = RED;
+  } else if (adj) {
+    title = adj->name;
+  } else if (linkCount > 1){
+    title = str("%d links", linkCount);
   }
-  if (linkCount > 1) title = str("%d links", linkCount);
 
   display_.setFont(&FreeSansBold12pt7b);
   display_.drawBorder(bgRainbow);
   display_.drawTitle(title.c_str(), fg, bgRainbow);
   display_.clearContent(pageBG, now);
   display_.drawTelem(state.telem, now, pageBG);
-  display_.setFont(&FreeSansBold9pt7b);
-  if (behaviors_.isActive())
+  if (adj) {
+    display_.setFont(&FreeMonoBold18pt7b);
+    auto v = *(adj->v);
+    String vstr = adj->v? String(v, v < 1? 3 : 1) : "??";
+    display_.drawCentered(vstr.c_str(), pageBG);
+  } else if (behaviors_.isActive()) {
+    display_.setFont(&FreeSansBold9pt7b);
     display_.drawCentered(behaviors_.getName(), pageBG);
+  } else { //clear this area
+    display_.drawCentered("   ", pageBG);
+  }
   display_.drawVersion(version_, pageBG);
   display_.endFrame();
 }

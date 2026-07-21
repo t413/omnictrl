@@ -128,6 +128,7 @@ void MotionTask::setup(DynamicsBase* dyn, DriveManager* dri, Controller* ctrl) {
     M5.Imu.loadOffsetFromNVS();
     imuFilt_.setFrequency(1000.0f / IMU_UPDATE_PERIOD); //Hz
   }
+  if (dyn) dyn->init();
   D_LOG("starting motion task");
   xTaskCreatePinnedToCore(imuControlTask, "Motion", 4096, this, 3, &imuTaskHandle_, 0);
 }

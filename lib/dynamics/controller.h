@@ -30,8 +30,9 @@ class Controller {
   bool enabled_ = false;
 
   static const uint8_t MAX_ADJUSTABLES = 15;
-  float* adjustables_[MAX_ADJUSTABLES] = {0};
-  String adjNames_[MAX_ADJUSTABLES];
+  struct Adj { float* v; String name; };
+  Adj adjustables_[MAX_ADJUSTABLES] = {0};
+  uint8_t adjustablesCount_ = 0;
   uint8_t selectedTune_ = MAX_ADJUSTABLES; //none selected
 
   SharedState* sharedState_;
@@ -49,6 +50,7 @@ public:
   uint8_t findPeer(const uint8_t* mac, bool allownew);
   uint8_t delegatePeer(const CPeer* old, uint32_t now); //switch to secondary controll, if possible
   CPeer* armActivate(uint8_t peeridx);
+  void adjustModeBump(bool up = true, bool clear = false);
 
   MotionControl getCrsfCtrl(uint32_t now) const;
   void resetPids();
