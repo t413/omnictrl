@@ -50,6 +50,7 @@ public:
   void handleRxPacket(const uint8_t* mac, const uint8_t* buf, uint8_t len);
   void drawLCD(const uint32_t);
   bool updateIMU();
+  void playTone(float frequency, uint32_t duration = 100, bool block = false, bool stopCurrent = false);
   const String version_;
 
   uint8_t nextPeer(uint8_t current, bool allowold);
@@ -58,4 +59,5 @@ public:
   void broadcast(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0);
 
   void setWakeupPower(bool wakeup);
+  void powerDown();
 };

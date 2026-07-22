@@ -94,6 +94,9 @@ void RCRemote::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_t 
   if (cmd == Cmds::Telemetry && pkt.payloadLen == sizeof(Telem)) {
     auto telem = *((const Telem*) pkt.payload);
     telem.timestamp = millis();
+    if (peer && !peer->isRecent(telem.timestamp)) {
+      playTone(2800, 40); //new telem
+    }
     if (peer) peer->lastCmd_ =telem; //save
   } else if (cmd == Cmds::PingReply) {
     D_LOG("Ping reply from %02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -132,6 +135,7 @@ void RCRemote::setArmState(bool arm) {
       }
     }
   }
+  playTone(arm? 800 : 600, 100);
   armed_ = arm;
 }
 // [dug] New peer dc:54:75:cb:ba:d0 -> 0x0
@@ -178,6 +182,7 @@ void RCRemote::pollJoystick(uint32_t now) {
     if (!joybtn && dbtnt < BTN_SHORTPRESS_MAX) { //short press
       auto peer = peerMgr_.findPeer(peerMgr_.activePeer_);
       if (armed_ || (peer && peer->lastCmd_.state)) { //is an armed bot, even if not by us
+        playTone(2200, 40);
         send(Cmds::ModeChange);
       } else {
         setArmState(true);
@@ -231,6 +236,22 @@ void RCRemote::setWakeupPower(bool wakeup) {
     joy_.set_rgb_color(0); //power off led
 }
 
+void RCRemote::powerDown() {
+  playTone(600, 200, true);
+  Serial.flush();
+  M5.Power.powerOff();
+}
+
+void RCRemote::playTone(float frequency, uint32_t duration, bool block, bool stopCurrent) {
+  #ifdef IS_M5
+  bool isLoud = M5.getBoard() == m5::board_t::board_M5StickS3;
+  isLoud &= frequency > 1200;
+  M5.Speaker.setVolume(isLoud? 64 : 255);
+  M5.Speaker.tone(frequency, duration, -1, stopCurrent);
+  if (block) delay(duration);
+  #endif
+}
+
 void RCRemote::loop() {
   uint32_t now = millis();
 
@@ -243,16 +264,18 @@ void RCRemote::loop() {
   }
   if (M5.BtnB.wasDecideClickCount()) { //left side button released
     lastWasMoved_ = now;
+    playTone(2000, 40);
     bool single = (M5.BtnB.wasSingleClicked());
     if (armed_) lastMotion_.adjust = fmod(lastMotion_.adjust + (single? 0.2f : -0.2), 1.0f); //bump up/down
     else peerMgr_.activePeer_ = nextPeer(peerMgr_.activePeer_, true); //change peer
     display_.requestRedraw();
-  } else if (M5.BtnB.wasReleasedAfterHold()) {
+  } else if (M5.BtnB.wasHold()) {
     translateMode_ = !translateMode_;
+    playTone(1600, 30);
   }
-  if (M5.BtnPWR.wasDecideClickCount()) { //right side button on older targets
+  if (M5.BtnPWR.wasClicked()) { //right side button on older targets
     if (armed_) setArmState(false);
-    else M5.Power.powerOff();
+    else powerDown();
   }
   #endif
 
@@ -299,9 +322,7 @@ void RCRemote::loop() {
     setWakeupPower(true); //turn everything back on
   } else if (!armed_ && powerSaveMode_ && (sinceMoved > IDLE_POWEROFF_SLEEP_MS) && !disableLightSleep) {
     D_LOG("power off after %dms", sinceMoved);
-    Serial.flush();
-    delay(100);
-    M5.Power.powerOff();
+    powerDown();
   }
   if (powerSaveMode_ && !disableLightSleep) {
     //ESP32 light sleep
