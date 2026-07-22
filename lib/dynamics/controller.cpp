@@ -170,7 +170,7 @@ void Controller::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_
     send(Cmds::PingReply, peer);
     D_LOG("Ping received from peer[%d], replied", peeridx);
   } else if (cmd == Cmds::ModeChange) {
-    behaviors_.increment();
+    behaviors_.increment(true, true);
   }
 }
 
@@ -241,7 +241,7 @@ void Controller::loop() {
   #ifdef IS_M5
   M5.update(); //updates buttons, etc
   if (M5.BtnA.wasSingleClicked()) {
-    if (enabled_) behaviors_.increment();
+    if (enabled_) behaviors_.increment(true, true);
     else if (selectedTune_ < adjustablesCount_) adjustModeBump(true, true); //clear
     else sendInfoStr("poke");
   } else if (M5.BtnA.wasDoubleClicked()) {
@@ -293,10 +293,10 @@ void Controller::loop() {
         }
       } else if (chan8 > 1550 && lastchan8_ < 1550) { //bump up
         if (adjBumpMode) adjustModeBump();
-        else behaviors_.increment();
+        else behaviors_.increment(true, false);
       } else if (chan8 < 1450 && lastchan8_ > 1450) { //bump down
         if (adjBumpMode) adjustModeBump(false);
-        else behaviors_.increment(false);
+        else behaviors_.increment(false, false);
       }
       lastchan8_ = chan8;
     }

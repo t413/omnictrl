@@ -91,7 +91,7 @@ struct Manager {
     int8_t prevActIdx_ = -1;
 
     Manager();
-    void increment(bool up = true);
+    void increment(bool up = true, bool includeDisable = false);
     void clear();
     void clearOrRestore();
     bool isActive() const;

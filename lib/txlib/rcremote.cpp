@@ -126,7 +126,7 @@ void RCRemote::setArmState(bool arm) {
     return;
   if (arm) { //
     for (float f : {lastMotion_.fwd, lastMotion_.side, lastMotion_.yaw}) {
-      if (abs(f) > 0.4) {
+      if (abs(f) > 0.6) {
         infoDisp_ = "stick err";
         return;
       }
@@ -176,9 +176,8 @@ void RCRemote::pollJoystick(uint32_t now) {
   if (lastJoyBtn_ != joybtn) {
     lastWasMoved_ = now;
     if (!joybtn && dbtnt < BTN_SHORTPRESS_MAX) { //short press
-      if (powerSaveMode_) {
-        //nothing! wake up
-      } else if (armed_) {
+      auto peer = peerMgr_.findPeer(peerMgr_.activePeer_);
+      if (armed_ || (peer && peer->lastCmd_.state)) { //is an armed bot, even if not by us
         send(Cmds::ModeChange);
       } else {
         setArmState(true);
@@ -199,6 +198,7 @@ void RCRemote::pollJoystick(uint32_t now) {
     mc.yaw = 0;
   }
   mc.side = constrain(mc.side, -1.0, 1.0);
+  mc.maxSpeed = 18.0f;
   mc.timestamp = now;
   //check for major discontinuity
   if (abs(mc.yaw - lastMotion_.yaw) > 1.0 || abs(mc.fwd - lastMotion_.fwd) > 1.0) {
@@ -206,9 +206,9 @@ void RCRemote::pollJoystick(uint32_t now) {
   } else {
     //apply smoothing
     float alpha = 0.3f; //0.3 is good for 25Hz, 0.2 for 50Hz
-    mc.fwd = alpha * lastMotion_.fwd + (1.0f - alpha) * mc.fwd;
-    mc.yaw = alpha * lastMotion_.yaw + (1.0f - alpha) * mc.yaw;
-    mc.side = alpha * lastMotion_.side + (1.0f - alpha) * mc.side;
+    mc.fwd  = alpha * mc.fwd  + (1.0f - alpha) * lastMotion_.fwd;
+    mc.yaw  = alpha * mc.yaw  + (1.0f - alpha) * lastMotion_.yaw;
+    mc.side = alpha * mc.side + (1.0f - alpha) * lastMotion_.side;
 
     //send it to selected rover
     send(Cmds::MotionControl, (uint8_t*)&mc, sizeof(MotionControl));
@@ -348,7 +348,7 @@ void RCRemote::drawLCD(const uint32_t now) {
   } else { display_.drawCentered("no joy", pageBG); }
 
   // Draw telemetry using the common function
-  display_.drawTelem(peer->lastCmd_, now, pageBG);
+  display_.drawTelem(peer? peer->lastCmd_ : Telem(), now, pageBG);
 
   if (true) { //validcount > 1) { //only show when handling multiple bots
     lcd->setFont(&FreeMono12pt7b);

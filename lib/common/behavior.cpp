@@ -95,9 +95,9 @@ Manager::Manager() {
     behaviors_ = {new Excited, new Happy, new Scared, new Drunk};
     clear();
 }
-void Manager::increment(bool up) {
-    activeIdx_ = (activeIdx_ + (up? 1 : -1)) % behaviors_.size();
-    D_LOG("Behavior activating #%d", activeIdx_);
+void Manager::increment(bool up, bool includeDisable) {
+    activeIdx_ = (activeIdx_ + (up? 1 : -1)) % (behaviors_.size() + (includeDisable? 1 : 0));
+    D_LOG("Behavior activating #%d / %d", activeIdx_, behaviors_.size());
 }
 void Manager::clear() {
     D_LOG("Behavior clear (from #%d)", activeIdx_);
