@@ -57,6 +57,7 @@ void RCRemote::setup() {
     remote_->lastSentFailFilt_ = alpha * failv + (1.0f - alpha) * remote_->lastSentFailFilt_;
   });
   espnowRegisterMac(BROADCAST_ADDRESS);
+  WiFi.setSleep(WIFI_PS_MAX_MODEM);
 
 #ifdef IS_M5
   D_LOG("setting up m5");
@@ -125,7 +126,7 @@ uint8_t RCRemote::validPeerCount() const {
 }
 
 void RCRemote::setArmState(bool arm) {
-  if (powerSaveMode_)
+  if (powerSaveMode_ && !lowPowerMode_)
     return;
   if (arm) { //
     for (float f : {lastMotion_.fwd, lastMotion_.side, lastMotion_.yaw}) {
@@ -226,13 +227,16 @@ void RCRemote::pollJoystick(uint32_t now) {
 }
 
 void RCRemote::setWakeupPower(bool wakeup) {
-  powerSaveMode_ = !wakeup;
+  if (lowPowerMode_) wakeup = false;
+  else powerSaveMode_ = !wakeup;
   M5.Lcd.setBrightness(wakeup? 200 : 0);
+  if (wakeup) M5.Lcd.wakeup();
+  else M5.Lcd.sleep();
   // auto pwr = M5.Power.M5pm1;
   // auto g2m = pwr.setGPIOMode(m5::M5PM1_Class::gpio2, m5::M5PM1_Class::output);
   // auto g2  = pwr.setGPIOOutput(m5::M5PM1_Class::gpio2, wakeup);
   // D_LOG("wakeup[%d], g2 %d %d", wakeup, g2m, g2);
-  if (!armed_ && joystickSetup_ && powerSaveMode_)
+  if (!armed_ && joystickSetup_ && !wakeup)
     joy_.set_rgb_color(0); //power off led
 }
 
@@ -257,10 +261,15 @@ void RCRemote::loop() {
 
   #ifdef IS_M5
   M5.update(); //updates buttons, etc
-  if (M5.BtnA.wasPressed()) {
+  if (M5.BtnA.wasClicked()) {
     lastWasMoved_ = now;
     setArmState(!armed_);
     display_.requestRedraw();
+  } else if (M5.BtnA.wasHold()) {
+    lowPowerMode_ = !lowPowerMode_;
+    D_LOG("low power mode set to %d", lowPowerMode_);
+    setWakeupPower(!lowPowerMode_);
+    playTone(1400, 200);
   }
   if (M5.BtnB.wasDecideClickCount()) { //left side button released
     lastWasMoved_ = now;
@@ -303,34 +312,25 @@ void RCRemote::loop() {
     isChargingFilt_ = alpha * ischg + (1.0f - alpha) * isChargingFilt_;
     isCharging_ = isChargingFilt_ > 0.2f;
 
-    if (!powerSaveMode_) { drawLCD(now); }
+    if (!powerSaveMode_ && !lowPowerMode_) { drawLCD(now); }
     lastDraw_ = now;
   }
 
   // -- power handling -- //
 
+  bool allowSleep = true;
   #if ARDUINO_USB_CDC_ON_BOOT
-  bool disableLightSleep = Serial.isConnected() || isCharging_; //don't sleep when plugged in!
-  #else
-  bool disableLightSleep = false;
+  allowSleep = !Serial.isConnected(); //don't sleep when plugged in!
   #endif
 
   uint32_t sinceMoved = now - lastWasMoved_;
   if (!powerSaveMode_ && sinceMoved > DISPLAY_SLEEP_MS) {
-    setWakeupPower(false); //turn of LCD
-  } else if (powerSaveMode_ && sinceMoved < DISPLAY_SLEEP_MS) {
+    setWakeupPower(false); //turn off LCD
+  } else if (powerSaveMode_ && !lowPowerMode_ && sinceMoved < DISPLAY_SLEEP_MS) {
     setWakeupPower(true); //turn everything back on
-  } else if (!armed_ && powerSaveMode_ && (sinceMoved > IDLE_POWEROFF_SLEEP_MS) && !disableLightSleep) {
+  } else if (!armed_ && powerSaveMode_ && (sinceMoved > (IDLE_POWEROFF_SLEEP_MS * (isCharging_? 10 : 1))) && allowSleep) {
     D_LOG("power off after %dms", sinceMoved);
     powerDown();
-  }
-  if (powerSaveMode_ && !disableLightSleep) {
-    //ESP32 light sleep
-    D_LOG("light sleep after %dms", sinceMoved);
-    Serial.flush();
-    M5.Power.lightSleep(100 * 1000); //100ms
-    delay(2);
-    yield();
   }
 }
 
