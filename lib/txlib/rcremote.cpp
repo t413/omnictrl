@@ -193,10 +193,7 @@ void RCRemote::pollJoystick(uint32_t now) {
   float expo_ = 1.5;
   mc.yaw   = expo(deadband( (x - joyCenterX_) / 65500.0 * 2, deadband_), expo_);
   mc.fwd   = expo(deadband(-(y - joyCenterY_) / 65500.0 * 2, deadband_), expo_);
-  if (joybtn) { //when joystick is held down, control side
-    mc.side = mc.yaw;
-    mc.yaw = 0;
-  }
+  if (joybtn != translateMode_) { std::swap(mc.side, mc.yaw); }
   mc.side = constrain(mc.side, -1.0, 1.0);
   mc.maxSpeed = 18.0f;
   mc.timestamp = now;
@@ -250,6 +247,8 @@ void RCRemote::loop() {
     if (armed_) lastMotion_.adjust = fmod(lastMotion_.adjust + (single? 0.2f : -0.2), 1.0f); //bump up/down
     else peerMgr_.activePeer_ = nextPeer(peerMgr_.activePeer_, true); //change peer
     display_.requestRedraw();
+  } else if (M5.BtnB.wasReleasedAfterHold()) {
+    translateMode_ = !translateMode_;
   }
   if (M5.BtnPWR.wasDecideClickCount()) { //right side button on older targets
     if (armed_) setArmState(false);

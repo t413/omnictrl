@@ -35,6 +35,7 @@ class RCRemote {
   String infoDisp_;
   float isChargingFilt_ = 0;
   bool isCharging_ = false;
+  bool translateMode_ = false;
 
 public:
   RCRemote(String version);
