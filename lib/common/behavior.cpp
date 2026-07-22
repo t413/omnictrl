@@ -39,6 +39,7 @@ Control Happy::iterate(uint32_t now, const MotionControl& in, bool isBalancing, 
     Control out(in);
     float intensity = getIntensity(in);
     float tf = now / 1000.0f;
+    osc_.freqMax_ = isBalancing? FREQMAX / 1.8f : FREQMAX;
 
     float sinVal = osc_.update(intensity, tf);
     float cosVal = osc_.getCos(intensity);
@@ -56,6 +57,7 @@ Control Excited::iterate(uint32_t now, const MotionControl& in, bool isBalancing
     Control out(in);
     float intensity = getIntensity(in);
     float tf = now / 1000.0f;
+    osc_.freqMax_ = isBalancing? FREQMAX / 2.0f : FREQMAX;
 
     float sinVal = osc_.update(intensity, tf);
     out.d_yaw += sinVal;
@@ -65,7 +67,7 @@ Control Excited::iterate(uint32_t now, const MotionControl& in, bool isBalancing
 Control Scared::iterate(uint32_t now, const MotionControl& in, bool isBalancing, Manager& mgr) {
     Control out(in);
     if (isBalancing)
-        mgr.clear();
+        return out; //skip
     float intensity = getIntensity(in);
     float tf = now / 1000.0f;
 
@@ -76,12 +78,11 @@ Control Scared::iterate(uint32_t now, const MotionControl& in, bool isBalancing,
 
 Control Drunk::iterate(uint32_t now, const MotionControl& in, bool isBalancing, Manager& mgr) {
     Control out(in);
-    if (isBalancing)
-        mgr.clear(); //balancing takes sobriety!
     //filters all output by alpha_, persisting via filtered_.
-    out.m.fwd  = filtered_.fwd  = alpha_ * in.fwd  + (1.0f - alpha_) * filtered_.fwd;
-    out.m.side = filtered_.side = alpha_ * in.side + (1.0f - alpha_) * filtered_.side;
-    out.m.yaw  = filtered_.yaw  = alpha_ * in.yaw  + (1.0f - alpha_) * filtered_.yaw;
+    float a = isBalancing? ALPHA * 2 : ALPHA;
+    out.m.fwd  = filtered_.fwd  = a * in.fwd  + (1.0f - a) * filtered_.fwd;
+    out.m.side = filtered_.side = a * in.side + (1.0f - a) * filtered_.side;
+    out.m.yaw  = filtered_.yaw  = a * in.yaw  + (1.0f - a) * filtered_.yaw;
     return out;
 }
 
@@ -94,13 +95,18 @@ Manager::Manager() {
     behaviors_ = {new Excited, new Happy, new Scared, new Drunk};
     clear();
 }
-void Manager::increment() {
-    activeIdx_ = (activeIdx_ + 1) % (behaviors_.size() + 1); //+1 allows for disabled
+void Manager::increment(bool up) {
+    activeIdx_ = (activeIdx_ + (up? 1 : -1)) % behaviors_.size();
     D_LOG("Behavior activating #%d", activeIdx_);
 }
 void Manager::clear() {
     D_LOG("Behavior clear (from #%d)", activeIdx_);
+    prevActIdx_ = activeIdx_;
     activeIdx_ = behaviors_.size();
+}
+void Manager::clearOrRestore() {
+    if (isActive()) clear();
+    else activeIdx_ = prevActIdx_;
 }
 
 bool Manager::isActive() const {

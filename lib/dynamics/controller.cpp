@@ -294,8 +294,8 @@ void Controller::loop() {
         if (adjBumpMode && tunable) {
           *tunable = pow(10, mapfloat(crsfCtrl.adjust, 0, 1, -2, 2));
           if (crsfCtrl.adjust < 0.01) *tunable = 0; //allow 0 values
-        } else {
-          behaviors_.clear();
+        } else if (lastchan8_ < 1900) {
+          behaviors_.clearOrRestore();
         }
       } else if (chan8 > 1550 && lastchan8_ < 1550) { //bump up
         if (adjBumpMode) adjustModeBump();

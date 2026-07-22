@@ -52,7 +52,8 @@ struct Oscillator {
 
 struct Happy : Behavior {
 public:
-    Oscillator osc_ = Oscillator(1.2f, 7.0f, 2.6, 0.5f);  // freqMin, freqMax, ampMin, ampMax
+    static constexpr float FREQMAX = 6.0F;
+    Oscillator osc_ = Oscillator(1.2f, FREQMAX, 2.6, 0.5f);  // freqMin, freqMax, ampMin, ampMax
     float frequency_ = 4.3f;   // Hz
     float radius_ = 1.0f;   // circle radius on fwd axis
 
@@ -61,7 +62,8 @@ public:
 };
 
 struct Excited : public Behavior {
-    Oscillator osc_ = Oscillator(2.0f, 8.0f, 2.0f, 1.0f);  // freqMin, freqMax, ampMin, ampMax
+    static constexpr float FREQMAX = 8.0F;
+    Oscillator osc_ = Oscillator(2.0f, FREQMAX, 2.0f, 1.0f);  // freqMin, freqMax, ampMin, ampMax
     virtual const char* getName() const { return "Excited"; }
     Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) override;
 };
@@ -74,7 +76,7 @@ struct Scared : public Behavior {
 
 struct Drunk : public Behavior {
     MotionControl filtered_;
-    float alpha_ = 0.04;
+    static constexpr float ALPHA = 0.04;
     virtual const char* getName() const { return "Drunk"; }
     Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) override;
 };
@@ -86,10 +88,12 @@ struct Drunk : public Behavior {
 struct Manager {
     std::vector<Behavior*> behaviors_;
     int8_t activeIdx_ = -1;
+    int8_t prevActIdx_ = -1;
 
     Manager();
-    void increment();
+    void increment(bool up = true);
     void clear();
+    void clearOrRestore();
     bool isActive() const;
 
     virtual const char* getName() const;
