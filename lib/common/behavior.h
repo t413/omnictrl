@@ -23,7 +23,7 @@ struct Behavior {
     virtual ~Behavior() = default;
     static float getIntensity(const MotionControl& m);
     virtual const char* getName() const = 0;
-    virtual Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) = 0;
+    virtual Control iterate(uint32_t now, const MotionControl&, bool isBalancing) = 0;
 };
 
 struct Oscillator {
@@ -58,27 +58,27 @@ public:
     float radius_ = 1.0f;   // circle radius on fwd axis
 
     virtual const char* getName() const { return "Happy"; }
-    Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) override;
+    Control iterate(uint32_t now, const MotionControl&, bool isBalancing) override;
 };
 
 struct Excited : public Behavior {
     static constexpr float FREQMAX = 8.0F;
     Oscillator osc_ = Oscillator(2.0f, FREQMAX, 2.0f, 1.0f);  // freqMin, freqMax, ampMin, ampMax
     virtual const char* getName() const { return "Excited"; }
-    Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) override;
+    Control iterate(uint32_t now, const MotionControl&, bool isBalancing) override;
 };
 
 struct Scared : public Behavior {
     Oscillator osc_ = Oscillator(2.0f, 7.0f, 2.5f, 1.2f);  // freqMin, freqMax, ampMin, ampMax
     virtual const char* getName() const { return "Scared"; }
-    Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) override;
+    Control iterate(uint32_t now, const MotionControl&, bool isBalancing) override;
 };
 
 struct Drunk : public Behavior {
     MotionControl filtered_;
     static constexpr float ALPHA = 0.04;
     virtual const char* getName() const { return "Drunk"; }
-    Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr) override;
+    Control iterate(uint32_t now, const MotionControl&, bool isBalancing) override;
 };
 
 // ------------- //
@@ -97,7 +97,7 @@ struct Manager {
     bool isActive() const;
 
     virtual const char* getName() const;
-    Control iterate(uint32_t now, const MotionControl&, bool isBalancing, Manager& mgr);
+    Control iterate(uint32_t now, const MotionControl&, bool isBalancing);
 };
 
 } // namespace behavior

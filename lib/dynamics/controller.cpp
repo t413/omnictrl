@@ -107,12 +107,6 @@ MotionControl Controller::getCrsfCtrl(uint32_t now) const {
   return ret;
 }
 
-behavior::Control Controller::getControl(uint32_t now) {
-  auto pidx = peerMgr_.getActiveIdx();
-  auto p = peerMgr_.findPeer(pidx);
-  return behaviors_.iterate(now, (p? p->lastCmd_ : MotionControl()), sharedState_->isBalancing, behaviors_);
-}
-
 uint8_t Controller::delegatePeer(const CPeer* old, uint32_t now) {
   for (uint8_t i = 0; i < PEERS_MAX; i++) {
     auto& peer = peerMgr_.peers_[i];
@@ -305,8 +299,6 @@ void Controller::loop() {
         else behaviors_.increment(false);
       }
       lastchan8_ = chan8;
-    } else if (active) {
-      active->lastCmd_.maxSpeed = 18;
     }
     arm = active && (active->lastCmd_.state > 0);
     if ((arm != enabled_)) {
@@ -315,7 +307,8 @@ void Controller::loop() {
     }
     enabled_ = arm;
 
-    auto control = getControl(now); //calculates behavior motion
+    //calculate behavior motion
+    auto control = behaviors_.iterate(now, (active? active->lastCmd_ : MotionControl()), sharedState_->isBalancing);
 
     portENTER_CRITICAL(&sharedState_->lock);
     sharedState_->activeCmd = control; //write for the controll thread to read

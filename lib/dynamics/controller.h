@@ -59,7 +59,6 @@ public:
   bool getEnabled() const { return enabled_; }
   DisplayHandler* getDisplay() { return &display_; }
   behavior::Manager& getBehaviorMgr() { return behaviors_; }
-  behavior::Control getControl(uint32_t now);
 
   void send(Cmds cmd, CPeer const* peer, const uint8_t* pyld = nullptr, uint8_t len = 0);
   void broadcast(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0);

@@ -35,7 +35,7 @@ float Behavior::getIntensity(const MotionControl& m) {
 //   Behaviors   //
 // ------------- //
 
-Control Happy::iterate(uint32_t now, const MotionControl& in, bool isBalancing, Manager& mgr) {
+Control Happy::iterate(uint32_t now, const MotionControl& in, bool isBalancing) {
     Control out(in);
     float intensity = getIntensity(in);
     float tf = now / 1000.0f;
@@ -53,7 +53,7 @@ Control Happy::iterate(uint32_t now, const MotionControl& in, bool isBalancing, 
     return out;
 }
 
-Control Excited::iterate(uint32_t now, const MotionControl& in, bool isBalancing, Manager& mgr) {
+Control Excited::iterate(uint32_t now, const MotionControl& in, bool isBalancing) {
     Control out(in);
     float intensity = getIntensity(in);
     float tf = now / 1000.0f;
@@ -64,7 +64,7 @@ Control Excited::iterate(uint32_t now, const MotionControl& in, bool isBalancing
     return out;
 }
 
-Control Scared::iterate(uint32_t now, const MotionControl& in, bool isBalancing, Manager& mgr) {
+Control Scared::iterate(uint32_t now, const MotionControl& in, bool isBalancing) {
     Control out(in);
     if (isBalancing)
         return out; //skip
@@ -76,7 +76,7 @@ Control Scared::iterate(uint32_t now, const MotionControl& in, bool isBalancing,
     return out;
 }
 
-Control Drunk::iterate(uint32_t now, const MotionControl& in, bool isBalancing, Manager& mgr) {
+Control Drunk::iterate(uint32_t now, const MotionControl& in, bool isBalancing) {
     Control out(in);
     //filters all output by alpha_, persisting via filtered_.
     float a = isBalancing? ALPHA * 2 : ALPHA;
@@ -119,10 +119,10 @@ const char* Manager::getName() const {
     return behaviors_[activeIdx_]->getName();
 }
 
-Control Manager::iterate(uint32_t now, const MotionControl& in, bool isBalancing, Manager& mgr) {
+Control Manager::iterate(uint32_t now, const MotionControl& in, bool isBalancing) {
     if (activeIdx_ < 0 || activeIdx_ >= behaviors_.size())
         return Control(in); //no behavior active
-    return behaviors_[activeIdx_]->iterate(now, in, isBalancing, mgr);
+    return behaviors_[activeIdx_]->iterate(now, in, isBalancing);
 }
 
 

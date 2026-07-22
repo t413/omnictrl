@@ -57,7 +57,7 @@ void TriOmni::iterate(uint32_t now, const SharedState& state, DriveManager& dm) 
   auto drives = dm.getDrives();
   auto dcount = dm.getCount();
   auto m = state.activeCmd.m;
-  bool enabled = m.state > 0;
+  bool enabled = state.getEnabled();
 
   float R[3][3] = {0};
   MotionTask::quaternionToRotationMatrix(state.q, R);
@@ -66,14 +66,14 @@ void TriOmni::iterate(uint32_t now, const SharedState& state, DriveManager& dm) 
   pitchFwd_ = pitchFwd;
   bool isUpOnEnd = abs(pitchFwd) < MAX_TILT; //more tilt allowed when balancing
   bool newbalance = isBalancing_ || isUpOnEnd;
-  bool balanceModeSpeed = false;
+  bool balanceModeSpeed = true;
 
   if (state.crsfActive) { //crsf control has extra features
     bool balanceModeEn = state.crsfChans[6] > 1400;
     balanceModeSpeed = state.crsfChans[6] > 1600;
     newbalance &= balanceModeEn;
   } else {
-    m.maxSpeed = min(18.0f, m.maxSpeed); //limit
+    m.maxSpeed = constrain(m.maxSpeed, 8.0f, 20.0f); //limit
   }
 
   if (!enabled) {
