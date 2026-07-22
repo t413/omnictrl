@@ -18,7 +18,7 @@ public:
 
   virtual void init();
   virtual void enable(bool);
-  virtual void iterate(uint32_t now, SharedState&, DriveManager&);
+  virtual void iterate(uint32_t now, const SharedState&, DriveManager&);
   virtual void resetPids();
   virtual String getStatus() const { return status_; }
 };

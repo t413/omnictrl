@@ -38,7 +38,7 @@ void UniBalancer::enable(bool en) {
       drives[i]->setMode(en? MotorMode::Current : MotorMode::Disabled);
 }
 
-void UniBalancer::iterate(uint32_t now, SharedState& state, DriveManager& dm) {
+void UniBalancer::iterate(uint32_t now, const SharedState& state, DriveManager& dm) {
   auto motor = getMotor();
   auto& motion = state.activeCmd.m;
   bool enabled = motion.state > 0;
@@ -68,8 +68,6 @@ void UniBalancer::iterate(uint32_t now, SharedState& state, DriveManager& dm) {
     speedCtrl_.reset();
     balCtrl_.reset();
   }
-
-  telem.pitch = state.pitchDeg; //save for next loop
 }
 
 void UniBalancer::resetPids() {

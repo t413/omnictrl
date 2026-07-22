@@ -1,5 +1,6 @@
 #include "version.h"
 #include <controller.h>
+#include <motiontask.h>
 #include <AlfredoCRSF.h>
 #include <multimotor/serial/serial_drive_manager.h>
 #include <multimotor/serial/lx_servo.h>
@@ -15,7 +16,8 @@ LXServo mot_left(0x03, &driveManager);
 #define LOW_BATTERY_VOLTAGE 21.0
 
 Controller ctrl(GIT_VERSION);
-TriOmni triOmni(&ctrl);
+MotionTask motion;
+TriOmni triOmni(&motion);
 
 void setup() {
 
@@ -24,8 +26,9 @@ void setup() {
   pinMode(txRxPin, OUTPUT|PULLUP);
   #endif
 
-  ctrl.setup(&triOmni, &driveManager, nullptr);
+  ctrl.setup(&motion.getState(), nullptr);
   ctrl.lowVoltageCutoff_ = LOW_BATTERY_VOLTAGE;
+  motion.setup(&triOmni, &driveManager, &ctrl);
 }
 
 void loop() {

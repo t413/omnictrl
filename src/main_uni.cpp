@@ -1,5 +1,6 @@
 #include "version.h"
 #include <controller.h>
+#include <motiontask.h>
 #include <AlfredoCRSF.h>
 #include <multimotor/can/odrive.h>
 #include <multimotor/can/can_esp32_twai.h>
@@ -19,7 +20,8 @@ ODriveDriver motor(23, &twaiInterface_);
 
 AlfredoCRSF crsf_;
 Controller ctrl(GIT_VERSION);
-UniBalancer dynamics(&ctrl);
+MotionTask motion;
+UniBalancer dynamics(&motion);
 
 void setup() {
   Serial1.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_CRSF_RX, PIN_CRSF_TX);
@@ -30,8 +32,9 @@ void setup() {
   driveManager.addDrive(&motor);
   dynamics.balCtrl_.tuneScale *= 15.0; //scale up PIDs
 
-  ctrl.setup(&dynamics, &driveManager, &crsf_);
+  ctrl.setup(&motion.getState(), &crsf_);
   ctrl.lowVoltageCutoff_ = LOW_BATTERY_VOLTAGE;
+  motion.setup(&dynamics, &driveManager, &ctrl);
 }
 
 void loop() {
