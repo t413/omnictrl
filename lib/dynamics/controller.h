@@ -35,7 +35,7 @@ class Controller {
   uint8_t adjustablesCount_ = 0;
   uint8_t selectedTune_ = MAX_ADJUSTABLES; //none selected
 
-  SharedState* sharedState_;
+  SharedState* sharedState_ = nullptr;
 
 public:
   Controller(String version);

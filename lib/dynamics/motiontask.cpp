@@ -105,7 +105,7 @@ void imuControlTask(void* arg) {
           ctx->state_.motorStates[i] = drives[i]->getMotorState();
       portEXIT_CRITICAL(&ctx->state_.lock);
       nextPollStats = now + POLL_STATS_UPDATE_PERIOD;
-      D_LOG("fetched %d, %d, msgs[0]: t%d v%0.1f [%0.1f,%0.1f,%0.1f]", dcount, counter % 32, latest, vbus, drives[0]->getVBus(), drives[1]->getVBus(), drives[2]->getVBus());
+      D_LOG("fetched %d, %d, msgs[0]: t%d v%0.1f", dcount, counter % 32, latest, vbus);
 
       counter++;
     }

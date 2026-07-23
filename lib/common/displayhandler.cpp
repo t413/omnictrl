@@ -113,13 +113,16 @@ void DisplayHandler::drawTelem(const Telem& telem, uint32_t now, uint16_t backgr
     drawCentered(status.c_str(), backgroundColor);
 }
 
-void DisplayHandler::drawVersion(const String& version, uint16_t backgroundColor) {
+void DisplayHandler::drawVersion(String version, uint16_t backgroundColor) {
     if (!lcd_) return;
 
     // Bottom aligned version text
     lcd_->setFont(&Font0);
     lcd_->setCursor(borderWidth_, lcd_->height() - borderWidth_ - lcd_->fontHeight());
     lcd_->setTextColor(WHITE, backgroundColor);
+    //limit version string length
+    if (version.length() > 18)
+        version = version.substring(0, 18);
     drawCentered(version.c_str(), backgroundColor);
 }
 

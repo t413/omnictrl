@@ -126,7 +126,7 @@ uint8_t RCRemote::validPeerCount() const {
 }
 
 void RCRemote::setArmState(bool arm) {
-  if (powerSaveMode_ && !lowPowerMode_)
+  if (displaySleep_ && !lowPowerMode_)
     return;
   if (arm) { //
     for (float f : {lastMotion_.fwd, lastMotion_.side, lastMotion_.yaw}) {
@@ -178,7 +178,7 @@ void RCRemote::pollJoystick(uint32_t now) {
   if (x == 257 && y == 257) { D_LOG("dis val2"); return; } //error reading
   bool joybtn = !joy_.get_button_value();
   uint32_t dbtnt = (now - lastJoyBtnChange_);
-  if (lastJoyBtn_ != joybtn) {
+  if (lastJoyBtn_ != joybtn && dbtnt > 20) {
     lastWasMoved_ = now;
     if (!joybtn && dbtnt < BTN_SHORTPRESS_MAX) { //short press
       auto peer = peerMgr_.findPeer(peerMgr_.activePeer_);
@@ -228,7 +228,7 @@ void RCRemote::pollJoystick(uint32_t now) {
 
 void RCRemote::setWakeupPower(bool wakeup) {
   if (lowPowerMode_) wakeup = false;
-  else powerSaveMode_ = !wakeup;
+  else displaySleep_ = !wakeup;
   M5.Lcd.setBrightness(wakeup? 200 : 0);
   if (wakeup) M5.Lcd.wakeup();
   else M5.Lcd.sleep();
@@ -294,7 +294,7 @@ void RCRemote::loop() {
     lastPing_ = now;
   }
 
-  if ((now - lastPoll_) > ((!armed_ || powerSaveMode_)? 200 : 25)) {
+  if ((now - lastPoll_) > ((!armed_ || displaySleep_)? 50 : 25)) {
 
     if (joystickSetup_) {
       pollJoystick(now);
@@ -312,7 +312,7 @@ void RCRemote::loop() {
     isChargingFilt_ = alpha * ischg + (1.0f - alpha) * isChargingFilt_;
     isCharging_ = isChargingFilt_ > 0.2f;
 
-    if (!powerSaveMode_ && !lowPowerMode_) { drawLCD(now); }
+    if (!displaySleep_ && !lowPowerMode_) { drawLCD(now); }
     lastDraw_ = now;
   }
 
@@ -324,11 +324,11 @@ void RCRemote::loop() {
   #endif
 
   uint32_t sinceMoved = now - lastWasMoved_;
-  if (!powerSaveMode_ && sinceMoved > DISPLAY_SLEEP_MS) {
+  if (!displaySleep_ && sinceMoved > DISPLAY_SLEEP_MS) {
     setWakeupPower(false); //turn off LCD
-  } else if (powerSaveMode_ && !lowPowerMode_ && sinceMoved < DISPLAY_SLEEP_MS) {
+  } else if (displaySleep_ && !lowPowerMode_ && sinceMoved < DISPLAY_SLEEP_MS) {
     setWakeupPower(true); //turn everything back on
-  } else if (!armed_ && powerSaveMode_ && (sinceMoved > (IDLE_POWEROFF_SLEEP_MS * (isCharging_? 10 : 1))) && allowSleep) {
+  } else if (!armed_ && allowSleep && (sinceMoved > (IDLE_POWEROFF_SLEEP_MS * (isCharging_? 10 : 1)))) {
     D_LOG("power off after %dms", sinceMoved);
     powerDown();
   }

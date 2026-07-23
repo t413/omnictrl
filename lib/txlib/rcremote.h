@@ -10,7 +10,7 @@
 
 namespace lgfx { inline namespace v1 { class LGFX_Device; } }
 
-constexpr uint32_t BTN_SHORTPRESS_MAX = 500;  // milliseconds
+constexpr uint32_t BTN_SHORTPRESS_MAX = 200;  // milliseconds
 constexpr uint32_t DISPLAY_SLEEP_MS = 5000;
 constexpr uint32_t IDLE_POWEROFF_SLEEP_MS = 20000;
 typedef Peer<Telem> TPeer;
@@ -21,7 +21,7 @@ class RCRemote {
   PeerMgr<Telem> peerMgr_;
   bool armed_ = false;
   uint32_t lastWasMoved_ = 0;
-  bool powerSaveMode_ = false;
+  bool displaySleep_ = false;
   bool joystickSetup_ = false;
   bool lastJoyBtn_ = false;
   uint32_t lastJoyBtnChange_ = 0;

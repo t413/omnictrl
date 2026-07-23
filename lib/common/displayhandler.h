@@ -38,7 +38,7 @@ public:
 
     // Specialized drawing functions
     void drawTelem(const Telem& telem, uint32_t now, uint16_t backgroundColor = 0x0000);
-    void drawVersion(const String& version, uint16_t backgroundColor = 0x0000);
+    void drawVersion(String version, uint16_t backgroundColor = 0x0000);
 
     static uint16_t rainbowColor(float v);
     static uint16_t timeRainbow(uint32_t now);

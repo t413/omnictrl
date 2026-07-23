@@ -251,7 +251,7 @@ void Controller::loop() {
   #endif
   float* tunable = selectedTune_ < adjustablesCount_? adjustables_[selectedTune_].v : NULL;
 
-  if ((now - lastUpdateTx) > IMU_UPDATE_PERIOD) {
+  if ((now - lastUpdateTx) > IMU_UPDATE_PERIOD && sharedState_) {
     // IMU reading, dynamics iterate, drive iterate now done in separate thread in imuControlTask
     //control inputs
     bool arm = enabled_;
@@ -314,7 +314,7 @@ void Controller::loop() {
     sharedState_->activeCmd = control; //write for the controll thread to read
     sharedState_->crsfActive = isCrsfActive();
     for (uint8_t c = 0; c < CRSF_CHANS; c++)
-      sharedState_->crsfChans[c] = crsf_->getChannel(c);
+      sharedState_->crsfChans[c] = crsf_? crsf_->getChannel(c) : 0;
     auto rot = sharedState_->dispRotate;
     portEXIT_CRITICAL(&sharedState_->lock);
     display_.setRotation(rot);
