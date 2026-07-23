@@ -59,6 +59,8 @@ public:
   void send(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0);
   void broadcast(Cmds cmd, const uint8_t* pyld = nullptr, uint8_t len = 0);
 
+  void loadSettings();
+  void saveSettings();
   void setWakeupPower(bool wakeup);
   void powerDown();
 };

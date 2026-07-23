@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <NowPacket.h>
 #include <esp_task_wdt.h>
+#include <nvs.h>
 #ifdef IS_M5
 #include <M5Unified.h>
 #endif
@@ -68,6 +69,7 @@ void RCRemote::setup() {
   }
   M5.Power.begin();
 #endif
+  loadSettings();
 
   D_LOG("finished setup");
 
@@ -76,6 +78,25 @@ void RCRemote::setup() {
   setupJoystick(2);
 }
 
+// rcremote.cpp - add these functions:
+void RCRemote::loadSettings() {
+  nvs_handle_t handle;
+  nvs_open("joystick", NVS_READONLY, &handle);
+  nvs_get_u16(handle, "centerX", &joyCenterX_);
+  nvs_get_u16(handle, "centerY", &joyCenterY_);
+  nvs_close(handle);
+  D_LOG("loaded joy calib: %d %d", joyCenterX_, joyCenterY_);
+}
+
+void RCRemote::saveSettings() {
+  nvs_handle_t handle;
+  nvs_open("joystick", NVS_READWRITE, &handle);
+  nvs_set_u16(handle, "centerX", joyCenterX_);
+  nvs_set_u16(handle, "centerY", joyCenterY_);
+  nvs_commit(handle);
+  nvs_close(handle);
+  D_LOG("saved joy calib: %d %d", joyCenterX_, joyCenterY_);
+}
 
 void RCRemote::handleRxPacket(const uint8_t* mac, const uint8_t* inbuf, uint8_t inlen) {
   comms::NowPacket pkt;
@@ -165,8 +186,21 @@ void RCRemote::setupJoystick(uint16_t maxtries) {
     if (fails > maxtries) return;
     delay(10);
   }
-  joy_.get_joy_adc_16bits_value_xy(&joyCenterX_, &joyCenterY_);
-  D_LOG("joystick center %d %d", joyCenterX_, joyCenterY_);
+  bool joybtn = !joy_.get_button_value();
+  if (joyCenterX_ == 0 || joyCenterY_ == 0 || joybtn) { //calibration time
+    playTone(1800, 200, true);
+    while ((joybtn = !joy_.get_button_value())) { //wait for joystick btn release
+      delay(40);
+      if (millis() - lastJoyBtnChange_ > 500) { //play a beep every 500ms
+        playTone(1800, 40);
+        lastJoyBtnChange_ = millis();
+      }
+    }
+    playTone(2200, 400, true);
+    joy_.get_joy_adc_16bits_value_xy(&joyCenterX_, &joyCenterY_);
+    playTone(2200, 40, true);
+    saveSettings();
+  }
   joystickSetup_ = true;
 }
 
