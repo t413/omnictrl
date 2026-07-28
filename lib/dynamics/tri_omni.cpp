@@ -7,11 +7,8 @@
 #include <utils.h>
 #include <multimotor/drive_manager.h>
 
-TriOmni::TriOmni(MotionTask* ctrl) : DynamicsBase(ctrl) { }
-
-constexpr uint8_t BACK = 0;
-constexpr uint8_t RGHT = 1;
-constexpr uint8_t LEFT = 2;
+TriOmni::TriOmni(MotionTask* ctrl, MotorDrive* right, MotorDrive* left, MotorDrive* back) :
+    DynamicsBase(ctrl), right_(right), left_(left), back_(back) { }
 
 void TriOmni::init() {
   ctx_->addAdjustable(&balanceCtrl_.P, "b.P");
@@ -28,34 +25,23 @@ void TriOmni::init() {
   ctx_->addAdjustable(&balanceYawCtrl_.D, "b.yaw.D");
   ctx_->addAdjustable(&balanceYawCtrl_.rampLimit, "b.yaw.Rl");
   ctx_->addAdjustable(&balanceYawCtrl_.limit, "b.yaw.lm");
-
-  auto drives = ctx_->getDrives();
-  auto dcount = ctx_->getDriveCount(false);
-  for (uint8_t i = 0; i < dcount; i++) {
-    if (drives[i])
-      drives[i]->setMode(MotorMode::Disabled); // start with disabled mode
-  }
 }
 
 void TriOmni::enable(bool en) {
   resetPids();
-  auto drives = ctx_->getDrives();
-  auto dcount = ctx_->getDriveCount(false);
-  for (uint8_t i = 0; i < dcount; i++)
-    if (drives[i])
-      drives[i]->setMode(en? MotorMode::Speed : MotorMode::Disabled);
+  for (auto d : {right_, left_, back_})
+    if (d) d->setMode(en? MotorMode::Speed : MotorMode::Disabled);
 }
 
 void TriOmni::calcBalanceSpeeds(const SharedState& state, float& fwd, float& yaw) {
-  float vr = state.motorStates[RGHT].velocity;
-  float vl = state.motorStates[LEFT].velocity;
+  if (!right_ || !left_) return;
+  float vr = right_->getMotorState().velocity;
+  float vl = left_->getMotorState().velocity;
   fwd = (vr - vl) / 2.0f; // right minus left, averaged
   yaw = (vr + vl) / 2.0f; // average rotation contribution
 }
 
-void TriOmni::iterate(uint32_t now, const SharedState& state, DriveManager& dm) {
-  auto drives = dm.getDrives();
-  auto dcount = dm.getCount();
+void TriOmni::iterate(uint32_t now, const SharedState& state, DriveManager&) {
   auto m = state.activeCmd.m;
   bool enabled = state.getEnabled();
 
@@ -89,19 +75,15 @@ void TriOmni::iterate(uint32_t now, const SharedState& state, DriveManager& dm) 
     D_LOG("Balancing mode %s", isBalancing_? "enabled" : "disabled");
     resetPids();
     lastBalanceChange_ = now;
-    for (uint8_t d = 0; d < dcount; d++) {
-      if (!drives[d]) continue;
-      auto wantmode = enabled? ((isBalancing_ && d != BACK)? MotorMode::Current : MotorMode::Speed) : MotorMode::Disabled;
-      drives[d]->setMode(wantmode);
-      D_LOG("m[%d] set mode %d", d, wantmode);
+    for (auto d : {right_, left_, back_}) {
+      if (!d) continue;
+      auto wantmode = enabled? ((isBalancing_ && d != back_)? MotorMode::Current : MotorMode::Speed) : MotorMode::Disabled;
+      d->setMode(wantmode);
+      D_LOG("m[%d] set mode %d", d->getName(), wantmode);
     }
   }
 
   //main control loop
-  if (dcount != 3) {
-    D_LOG("strange drive number %d", dcount);
-    return;
-  }
   m.fwd  *= m.maxSpeed;
   m.side *= m.maxSpeed;
   m.yaw  *= m.maxSpeed;
@@ -138,11 +120,10 @@ void TriOmni::iterate(uint32_t now, const SharedState& state, DriveManager& dm) 
     balanceSpeedCtrl_.reset();
     balanceCtrl_.reset();
   }
-  if (enabled) {
-    //TODO check each drive pointer
-    drives[BACK]->setSetpoint(MotorMode::Speed, isBalancing_? vyaw : (y  +   0   + m.side));
-    drives[LEFT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  - m.fwd   - m.side * 1.33/2);
-    drives[RGHT]->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  + m.fwd   - m.side * 1.33/2);
+  if (enabled && back_ && left_ && right_) {
+    back_ ->setSetpoint(MotorMode::Speed, isBalancing_? vyaw : (y  +   0   + m.side));
+    left_ ->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  - m.fwd   - m.side * 1.33/2);
+    right_->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  + m.fwd   - m.side * 1.33/2);
   }
 
   status_ = isBalancing_? "woah." : enabled? "wee!" : ":|";

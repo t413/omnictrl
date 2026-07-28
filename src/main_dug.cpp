@@ -9,9 +9,9 @@
 
 CanEsp32Twai twaiInterface_;
 CanDriveManager driveManager(&twaiInterface_);
-CyberGearDriver mot_back(0x7D, &twaiInterface_);
-CyberGearDriver mot_right(0x7E, &twaiInterface_);
-CyberGearDriver mot_left(0x7F, &twaiInterface_);
+CyberGearDriver mot_back (0x7D, &twaiInterface_, "back");
+CyberGearDriver mot_right(0x7E, &twaiInterface_, "right");
+CyberGearDriver mot_left (0x7F, &twaiInterface_, "left");
 
 constexpr int PIN_CRSF_RX  = 5;
 constexpr int PIN_CRSF_TX  = 6;
@@ -24,7 +24,7 @@ constexpr int PIN_CAN_TX  = 2;
 AlfredoCRSF crsf_;
 Controller ctrl(GIT_VERSION);
 MotionTask motion;
-TriOmni triOmni(&motion);
+TriOmni triOmni(&motion, &mot_right, &mot_left, &mot_back);
 
 void setup() {
   Serial1.begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_CRSF_RX, PIN_CRSF_TX);

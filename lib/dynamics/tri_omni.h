@@ -3,6 +3,7 @@
 #include <pid.h>
 
 #define MAX_TILT 30.0
+class MotorDrive;
 
 class TriOmni : public DynamicsBase {
   PIDCtrl balanceCtrl_ = PIDCtrl(0.6, 0.0, 0.1, 2); //inputs angle -> outputs torque (in A)
@@ -13,10 +14,11 @@ class TriOmni : public DynamicsBase {
   bool isBalancing_ = false;
   float pitchFwd_ = 0.0f;
   String status_;
+  MotorDrive* right_ = nullptr, * left_ = nullptr, * back_ = nullptr;
 
 public:
   virtual ~TriOmni() = default;
-  TriOmni(MotionTask*);
+  TriOmni(MotionTask*, MotorDrive* right, MotorDrive* left, MotorDrive* back);
 
   virtual void init();
   virtual void enable(bool);
