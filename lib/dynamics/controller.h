@@ -9,6 +9,7 @@
 
 namespace lgfx { inline namespace v1 { class LGFX_Device; } }
 
+class OnboardingCtrl;
 class DynamicsBase;
 class AlfredoCRSF;
 class MotorDrive;
@@ -24,6 +25,7 @@ class Controller {
   PeerMgr<MotionControl> peerMgr_;
   DisplayHandler display_;
   leds::LedRig leds_;
+  OnboardingCtrl* onboarding_ = nullptr;
 
   AlfredoCRSF* crsf_ = nullptr;
   int lastchan8_ = 0;
@@ -44,6 +46,7 @@ public:
   void addAdjustable(float* adjustable, const String& name);
 
   void setup(SharedState*, AlfredoCRSF* crsf);
+  void setOnboarding(OnboardingCtrl* o) { onboarding_ = o; }
   void loop();
   void disable(String reason = "");
 

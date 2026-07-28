@@ -27,7 +27,11 @@ void setup() {
   // driveManager.beginSinglePin(busSerial, 1);
   driveManager.beginDualPins(busSerial, 2, 1);
 
-  motion.setup(&triOmni, &driveManager, &ctrl);
+  if (auto onboard = OnboardingCtrl::checkCreate(&driveManager, &triOmni, &ctrl)) {
+    ctrl.setOnboarding(onboard);
+  } else {
+    motion.setup(&triOmni, &driveManager, &ctrl);
+  }
 }
 
 void loop() {

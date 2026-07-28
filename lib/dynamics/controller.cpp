@@ -1,5 +1,6 @@
 #include "controller.h"
 #include "motiontask.h"
+#include "onboarding.h"
 #include <log.h>
 #include <NowPacket.h>
 #include <dynamics_base.h>
@@ -241,15 +242,23 @@ void Controller::loop() {
   #ifdef IS_M5
   M5.update(); //updates buttons, etc
   if (M5.BtnA.wasSingleClicked()) {
-    if (enabled_) behaviors_.increment(true, true);
+    if (onboarding_) onboarding_->onShortPress();
+    else if (enabled_) behaviors_.increment(true, true);
     else if (selectedTune_ < adjustablesCount_) adjustModeBump(true, true); //clear
     else sendInfoStr("poke");
   } else if (M5.BtnA.wasDoubleClicked()) {
+    if (onboarding_) onboarding_->onPressDouble();
     if (behaviors_.isActive()) behaviors_.clear();
     else adjustModeBump();
+  } else if (M5.BtnA.wasHold() && onboarding_) {
+    onboarding_->onLongPress();
   }
   #endif
   float* tunable = selectedTune_ < adjustablesCount_? adjustables_[selectedTune_].v : NULL;
+
+  if (onboarding_) {
+    return onboarding_->iterate(now); //avoid everything else
+  }
 
   if ((now - lastUpdateTx) > IMU_UPDATE_PERIOD && sharedState_) {
     // IMU reading, dynamics iterate, drive iterate now done in separate thread in imuControlTask

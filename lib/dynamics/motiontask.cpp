@@ -80,6 +80,7 @@ void imuControlTask(void* arg) {
         ctx->driveManager_->readOnce(now, 180);
       }
 
+      String report;
       for (int i = 0; i < dcount; i++) {
         if (!drives[i]) break;
         auto time = drives[i]->getLastStatusTime();
@@ -90,6 +91,7 @@ void imuControlTask(void* arg) {
         if ((now - time) > 200)
           continue;
         auto v = drives[i]->getVBus();
+        report += " [#" + String(drives[i]->getId()) + " m" + String((int)state.mode) + " t" + String(state.temperature, 1) + " v" + String(state.velocity, 1) + " p" + String(state.position, 1) + " " + String(v) + "v]";
         if (v > 0.9) { //has a value
           if (vbus < 0.1 && v > 0.1)
             vbus = v; // initialize filtered VBUS
@@ -105,7 +107,7 @@ void imuControlTask(void* arg) {
           ctx->state_.motorStates[i] = drives[i]->getMotorState();
       portEXIT_CRITICAL(&ctx->state_.lock);
       nextPollStats = now + POLL_STATS_UPDATE_PERIOD;
-      D_LOG("fetched %d, %d, msgs[0]: t%d v%0.1f", dcount, counter % 32, latest, vbus);
+      D_LOG("fetched %d, %d, msgs[0]: t%d v%0.1f: %s", dcount, counter % 32, latest, vbus, report.c_str());
 
       counter++;
     }
