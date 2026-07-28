@@ -76,7 +76,7 @@ Control Scared::iterate(uint32_t now, const MotionControl& in, bool isBalancing)
     return out;
 }
 
-Control Drunk::iterate(uint32_t now, const MotionControl& in, bool isBalancing) {
+Control Sloppy::iterate(uint32_t now, const MotionControl& in, bool isBalancing) {
     Control out(in);
     //filters all output by alpha_, persisting via filtered_.
     float a = isBalancing? ALPHA * 2 : ALPHA;
@@ -92,7 +92,7 @@ Control Drunk::iterate(uint32_t now, const MotionControl& in, bool isBalancing) 
 // ------------- //
 
 Manager::Manager() {
-    behaviors_ = {new Excited, new Happy, new Scared, new Drunk};
+    behaviors_ = {new Excited, new Happy, new Scared, new Sloppy};
     clear();
 }
 void Manager::increment(bool up, bool includeDisable) {

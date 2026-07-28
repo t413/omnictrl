@@ -74,10 +74,10 @@ struct Scared : public Behavior {
     Control iterate(uint32_t now, const MotionControl&, bool isBalancing) override;
 };
 
-struct Drunk : public Behavior {
+struct Sloppy : public Behavior {
     MotionControl filtered_;
     static constexpr float ALPHA = 0.04;
-    virtual const char* getName() const { return "Drunk"; }
+    virtual const char* getName() const { return "Sloppy"; }
     Control iterate(uint32_t now, const MotionControl&, bool isBalancing) override;
 };
 

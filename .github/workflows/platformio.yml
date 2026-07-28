@@ -14,11 +14,14 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-
     steps:
+
     - uses: actions/checkout@v4
       with:
+        fetch-depth: 0 #fetches all history
+        fetch-tags: true #include tags for git-describe versioning
         submodules: recursive
+
     - name: Cache PlatformIO and pip
       uses: actions/cache@v4
       with:
@@ -28,10 +31,12 @@ jobs:
         key: ${{ runner.os }}-platformio-${{ hashFiles('**/platformio.ini') }}
         restore-keys: |
           ${{ runner.os }}-platformio-
+
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.12'
+
     - name: Install PlatformIO
       shell: bash
       run: |
@@ -39,23 +44,39 @@ jobs:
         pip install --upgrade platformio
 
     - name: PlatformIO Build
+      run: pio run
+
+    - name: Prepare artifacts
       run: |
-        pio run &&
-        ( cd .pio/build && for d in *; do f="$d/firmware.bin"; [ -f "$f" ] && mv "$f" "../../firmware_${d}.bin" || echo "no file ${f}"; done )
+        mkdir -p renamed_artifacts
+        REPO_NAME=$(basename ${{ github.repository }})
+        GIT_DESC=$(python utils.py simple)
+        echo "version: $GIT_DESC"
+        find .pio/build -name "firmware.bin" | while read -r file; do
+          TARGET=$(basename $(dirname "$file"));
+          echo "- found ${file} -> ${REPO_NAME}-${TARGET}-${GIT_DESC}.bin";
+          cp "$file" "renamed_artifacts/${REPO_NAME}-${TARGET}-${GIT_DESC}.bin";
+        done
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: firmware-binaries
+        path: renamed_artifacts/*.bin
 
     - name: PlatformIO Tests
       run: |
         pio test -e test_native --junit-output-path test-results-main.xml &&
         ( cd lib/multimotor && pio test -e test_native --junit-output-path ../../test-results-multimotor.xml )
 
-    - name: Upload results
+    - name: Upload Test Results
       uses: actions/upload-artifact@v4
       with:
         name: platformio-test-results
         path: |
           test-results-*.xml
-          firmware_*.bin
         if-no-files-found: error
+
     - name: Publish test results
       uses: dorny/test-reporter@v2
       if: ${{ !cancelled() }}

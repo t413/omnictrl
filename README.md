@@ -1,17 +1,17 @@
 # OmniCtrl: The coolest robot controller 🕹
 
 [![Top Language](https://img.shields.io/github/languages/top/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl)
-[![Lines of Code](https://tokei.rs/b1/github/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/graphs/code-frequency)
+[![Lines of Code](https://aschey.tech/tokei/github/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/graphs/code-frequency)
 [![GitHub Repo stars](https://img.shields.io/github/stars/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/network/members)
-![Tests](https://img.shields.io/github/actions/workflow/status/t413/omnictrl/runtests.yml?style=flat-square)
+![Tests](https://img.shields.io/github/actions/workflow/status/t413/omnictrl/platformio.yml?style=flat-square)
 [![Last commit](https://img.shields.io/github/last-commit/t413/omnictrl?style=flat-square)](https://github.com/t413/omnictrl/commits/main)
 [![Users Total](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscord.com%2Fapi%2Finvites%2FDqJNftD7Hw%3Fwith_counts%3Dtrue&query=%24.approximate_member_count&logo=discord&logoColor=white&label=Users&color=5865F2&style=flat-square)](https://3d.t413.com/go/discord?ref=gh-omni)
 [![Users Online](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fdiscord.com%2Fapi%2Finvites%2FDqJNftD7Hw%3Fwith_counts%3Dtrue&query=%24.approximate_presence_count&label=Online&color=5865F2&style=flat-square)](https://3d.t413.com/go/discord?ref=gh-omni)
 [![Eyes: Googly](https://img.shields.io/badge/Eyes-Googly-yellow?style=flat-square)](#)
 
 
-The controller for Doug, the omni-wheeled robot!
+The controller for Dug, the omni-wheeled robot!
 
 [![rover gif](https://github.com/user-attachments/assets/3abf20fa-31b0-4424-8c4f-44cd74c5599f)](https://t413.com/go/dug-mw?ref=gh)
 
@@ -34,13 +34,13 @@ _Join my [3D Design Discord](https://3d.t413.com/go/discord?ref=gh-omni) and say
   - CANBus Drives: (supports mixed bus with different drives at once)
     * ODrive (and odrive clone like steadywin motors)
     * Xiaomi CyberGear motors
-    * RobStride is a work-in-progress
-  - Serial drives (e.g. Dynamixel) coming soon
+    * RobStride
+  - Serial bus servos like the Hiwonder/LewanSoul LX-16A (e.g. Dynamixel)
 - Multi-operator support
   * Multiple ESP-NOW controllers/CRSF remotes can connect and take-over
   * Nice seamless switching between controllers
 - Multi-robot support
-  * One remote can switch between multiple robots (work-in-progress)
+  * One remote can switch between multiple robots
 - Supports different radio protocols
   * CRSF serial systems: ExpressLRS & Crossfire
   * ESP-NOW for low-latency control without external hardware
@@ -49,7 +49,8 @@ _Join my [3D Design Discord](https://3d.t413.com/go/discord?ref=gh-omni) and say
   * Uses a Madgwick filter for orientation estimation
   * Fancy rotation matrix for on-end balancing
 - LCD support using M5Stack library
-  * has system for tuning PID gains
+  * Integrated system for tuning PID gains
+- Behaviors! Select mix-in emotive behaviors with a push of a button: Happy, Excited, Scared, Sloppy.
 
 ## Installation
 
