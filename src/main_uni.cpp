@@ -9,7 +9,7 @@
 
 CanEsp32Twai twaiInterface_;
 CanDriveManager driveManager(&twaiInterface_);
-ODriveDriver motor(23, &twaiInterface_);
+ODriveDriver motor(23, &twaiInterface_, "drive");
 
 #define PIN_CRSF_RX 5
 #define PIN_CRSF_TX 6
