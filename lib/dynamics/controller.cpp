@@ -248,7 +248,7 @@ void Controller::loop() {
     else sendInfoStr("poke");
   } else if (M5.BtnA.wasDoubleClicked()) {
     if (onboarding_) onboarding_->onPressDouble();
-    if (behaviors_.isActive()) behaviors_.clear();
+    else if (behaviors_.isActive()) behaviors_.clear();
     else adjustModeBump();
   } else if (M5.BtnA.wasHold() && onboarding_) {
     onboarding_->onLongPress();

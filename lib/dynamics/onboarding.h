@@ -11,8 +11,10 @@ class OnboardingCtrl {
   DynamicsBase* dyn_ = nullptr;
   Controller* ctrl_ = nullptr;
   MotorDrive* drive_ = nullptr;
+  uint8_t drivecount_ = 0; //set _before_ adding drive_
   uint8_t selected_ = 0;
   uint32_t lastDraw_ = 0;
+  uint32_t scanStart_ = 0;
 public:
 
   static OnboardingCtrl* checkCreate(DriveManager*, DynamicsBase*, Controller*);
@@ -24,6 +26,10 @@ public:
   void onLongPress();
 
   MotorDrive* selectedSlot() const;
+  void bumpId();
+  void startScan(bool includeStart);
+  void scanIterate();
+  void clear();
 
 private:
   OnboardingCtrl(DriveManager* mgr, DynamicsBase*, Controller*);

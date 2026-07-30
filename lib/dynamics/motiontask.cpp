@@ -1,5 +1,6 @@
 #include "motiontask.h"
 #include "controller.h"
+#include "onboarding.h"
 #include <log.h>
 #include <dynamics_base.h>
 #include <multimotor/drive_manager.h>
@@ -126,6 +127,10 @@ void MotionTask::setup(DynamicsBase* dyn, DriveManager* dri, Controller* ctrl) {
   dynamics_ = dyn;
   driveManager_ = dri;
   comms_ = ctrl;
+  if (auto onboard = OnboardingCtrl::checkCreate(dri, dyn, ctrl)) {
+    return ctrl->setOnboarding(onboard); //skip task and everything else
+  }
+
   if (M5.Imu.isEnabled()) {
     M5.Imu.loadOffsetFromNVS();
     imuFilt_.setFrequency(1000.0f / IMU_UPDATE_PERIOD); //Hz

@@ -1,6 +1,5 @@
 #include "version.h"
 #include <controller.h>
-#include <onboarding.h>
 #include <motiontask.h>
 #include <multimotor/serial/serial_drive_manager.h>
 #include <multimotor/serial/lx_servo.h>
@@ -27,11 +26,7 @@ void setup() {
   // driveManager.beginSinglePin(busSerial, 1);
   driveManager.beginDualPins(busSerial, 2, 1);
 
-  if (auto onboard = OnboardingCtrl::checkCreate(&driveManager, &triOmni, &ctrl)) {
-    ctrl.setOnboarding(onboard);
-  } else {
-    motion.setup(&triOmni, &driveManager, &ctrl);
-  }
+  motion.setup(&triOmni, &driveManager, &ctrl);
 }
 
 void loop() {
