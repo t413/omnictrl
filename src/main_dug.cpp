@@ -23,6 +23,7 @@ constexpr int PIN_CAN_TX  = 2;
 
 AlfredoCRSF crsf_;
 Controller ctrl(GIT_VERSION);
+leds::LedRig leds_;
 MotionTask motion;
 TriOmni triOmni(&motion, &mot_right, &mot_left, &mot_back);
 
@@ -35,7 +36,7 @@ void setup() {
   for (auto m : {&mot_back, &mot_right, &mot_left})
     driveManager.addDrive(m);
 
-  ctrl.setup(&motion.getState(), &crsf_);
+  ctrl.setup(&motion.getState(), &crsf_, &leds_);
   ctrl.lowVoltageCutoff_ = LOW_BATTERY_VOLTAGE;
   motion.setup(&triOmni, &driveManager, &ctrl);
 }

@@ -46,10 +46,11 @@ void Controller::addAdjustable(float* adjustable, const String& name) {
   ++adjustablesCount_;
 }
 
-void Controller::setup(SharedState* shared, AlfredoCRSF* crsf) {
+void Controller::setup(SharedState* shared, AlfredoCRSF* crsf, leds::LedRig* leds) {
   controller_ = this;
   sharedState_ = shared;
   crsf_ = crsf;
+  leds_ = leds;
 #ifdef CONFIG_IDF_TARGET_ESP32
   Serial.begin(115200);
 #endif
@@ -87,7 +88,8 @@ void Controller::setup(SharedState* shared, AlfredoCRSF* crsf) {
     D_LOG("finished setup");
 
   delay(100);
-  leds_.setup();
+  if (leds_)
+    leds_->setup();
 }
 
 bool Controller::isCrsfActive() const {
@@ -358,6 +360,7 @@ void Controller::adjustModeBump(bool up, bool clear) {
 }
 
 void Controller::drawLEDs(const uint32_t now) {
+  if (!leds_) return;
   auto aidx = peerMgr_.getActiveIdx();
   auto active = peerMgr_.findPeer(aidx);
   portENTER_CRITICAL(&sharedState_->lock);
@@ -365,15 +368,15 @@ void Controller::drawLEDs(const uint32_t now) {
   float ay = sharedState_->accelY;
   float az = sharedState_->accelZ;
   portEXIT_CRITICAL(&sharedState_->lock);
-  leds_.update(now, ax, ay, az);
+  leds_->update(now, ax, ay, az);
 
   // Simple behavior → color+fire mapping
   switch (behaviors_.activeIdx_) {
-    case 0: leds_.set(CRGB::Cyan, CRGB::Green4, leds::EyeShape::Circle); break; // Happy
-    case 1: leds_.set(CRGB::Yellow, CRGB::Orange3, leds::EyeShape::Heart); break; // Excited
-    case 2: leds_.set(CRGB::Red, CRGB::Yellow2, leds::EyeShape::Circle);  break; // Scared
-    case 3: leds_.set(CRGB::Purple, CRGB::Blue3, leds::EyeShape::Heart); break; // Drunk
-    default: leds_.set(CRGB(0x2b65c9), CRGB(0xD02090), leds::EyeShape::Circle); // #2b65c9 #D02090
+    case 0: leds_->set(CRGB::Cyan, CRGB::Green4, leds::EyeShape::Circle); break; // Happy
+    case 1: leds_->set(CRGB::Yellow, CRGB::Orange3, leds::EyeShape::Heart); break; // Excited
+    case 2: leds_->set(CRGB::Red, CRGB::Yellow2, leds::EyeShape::Circle);  break; // Scared
+    case 3: leds_->set(CRGB::Purple, CRGB::Blue3, leds::EyeShape::Heart); break; // Drunk
+    default: leds_->set(CRGB(0x2b65c9), CRGB(0xD02090), leds::EyeShape::Circle); // #2b65c9 #D02090
   }
 }
 

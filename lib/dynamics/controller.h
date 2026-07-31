@@ -24,7 +24,7 @@ class Controller {
   int8_t lastBehaviorIdx_ = -1;
   PeerMgr<MotionControl> peerMgr_;
   DisplayHandler display_;
-  leds::LedRig leds_;
+  leds::LedRig* leds_ = nullptr;
   OnboardingCtrl* onboarding_ = nullptr;
 
   AlfredoCRSF* crsf_ = nullptr;
@@ -45,7 +45,7 @@ public:
 
   void addAdjustable(float* adjustable, const String& name);
 
-  void setup(SharedState*, AlfredoCRSF* crsf);
+  void setup(SharedState*, AlfredoCRSF* crsf, leds::LedRig* leds = nullptr);
   void setOnboarding(OnboardingCtrl* o) { onboarding_ = o; }
   void loop();
   void disable(String reason = "");
