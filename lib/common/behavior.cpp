@@ -4,6 +4,10 @@
 
 namespace behavior {
 
+#ifndef constrain
+#define constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
+#endif
+
 float Oscillator::update(float intensity, float ts) {
     float dt = ts - lastTime_;
     lastTime_ = ts;
