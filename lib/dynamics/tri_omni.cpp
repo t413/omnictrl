@@ -79,7 +79,7 @@ void TriOmni::iterate(uint32_t now, const SharedState& state, DriveManager&) {
       if (!d) continue;
       auto wantmode = enabled? ((isBalancing_ && d != back_)? MotorMode::Current : MotorMode::Speed) : MotorMode::Disabled;
       d->setMode(wantmode);
-      D_LOG("m[%d] set mode %d", d->getName(), wantmode);
+      D_LOG("m[%s] set mode %d", d->getName(), wantmode);
     }
   }
 
@@ -124,6 +124,9 @@ void TriOmni::iterate(uint32_t now, const SharedState& state, DriveManager&) {
     back_ ->setSetpoint(MotorMode::Speed, isBalancing_? vyaw : (y  +   0   + m.side));
     left_ ->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  - m.fwd   - m.side * 1.33/2);
     right_->setSetpoint(isBalancing_? MotorMode::Current : MotorMode::Speed, y  + m.fwd   - m.side * 1.33/2);
+  } else {
+    for (auto d : {right_, left_, back_})
+      if (d) d->setSetpoint(MotorMode::Disabled, 0);
   }
 
   status_ = isBalancing_? "woah." : enabled? "wee!" : ":|";

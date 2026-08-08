@@ -10,7 +10,7 @@ class DriveManager;
 class DynamicsBase;
 class MotorDrive;
 
-constexpr uint32_t IMU_UPDATE_PERIOD = 20; //ms
+constexpr uint32_t IMU_UPDATE_PERIOD = 5; //ms
 constexpr uint32_t FETCH_OFFSET = 3; //ms before IMU_UPDATE
 constexpr uint32_t POLL_STATS_UPDATE_PERIOD = 200; //ms
 

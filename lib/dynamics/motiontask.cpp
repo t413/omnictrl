@@ -55,6 +55,7 @@ void imuControlTask(void* arg) {
       if (ctx->dynamics_ && ctx->driveManager_) { // Update dynamics (PIDs, writes to can bus)
         ctx->driveManager_->iterate(now, 0); //handle any other incoming data
         ctx->dynamics_->iterate(now, statecpy, *ctx->driveManager_); // convert µs to ms
+        ctx->driveManager_->actuate(now); //apply any setpoints (if needed)
 
         bool arm = statecpy.getEnabled();
         if ((arm != enabled_)) { //state chage detect

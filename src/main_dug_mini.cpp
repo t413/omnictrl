@@ -1,32 +1,40 @@
 #include "version.h"
 #include <controller.h>
 #include <motiontask.h>
-#include <multimotor/serial/serial_drive_manager.h>
-#include <multimotor/serial/lx_servo.h>
 #include <tri_omni.h>
+#include <esc.h>
+#include <AlfredoCRSF.h>
 
-HardwareSerial* busSerial = &Serial1;
-SerialDriveManager driveManager;
-LXServo mot_back (0x02, &driveManager, "back");
-LXServo mot_right(0x03, &driveManager, "right");
-LXServo mot_left (0x04, &driveManager, "left");
+HardwareSerial* crsfserial = &Serial1;
+HardwareSerial* telemSerial = &Serial2;
+
+constexpr auto PIN_CRSF_RX  = GPIO_NUM_2; //grove port
+constexpr auto PIN_CRSF_TX  = GPIO_NUM_1;
+AlfredoCRSF crsf_;
+
+ESCManager mgr;
+ESC mot_rght(GPIO_NUM_5, &mgr, "right");
+ESC mot_left(GPIO_NUM_6, &mgr, "left");
+ESC mot_back(GPIO_NUM_7, &mgr, "back");
+constexpr auto PIN_TELEM_TX  = GPIO_NUM_8;
 
 #define LOW_BATTERY_VOLTAGE 6.4
 
 Controller ctrl(GIT_VERSION);
 MotionTask motion;
-TriOmni triOmni(&motion, &mot_right, &mot_left, &mot_back);
+TriOmni triOmni(&motion, &mot_rght, &mot_left, &mot_back);
 
 void setup() {
-  ctrl.setup(&motion.getState(), nullptr);
+  D_LOG("starting up");
+  crsfserial->begin(CRSF_BAUDRATE, SERIAL_8N1, PIN_CRSF_RX, PIN_CRSF_TX);
+  telemSerial->begin(1000000, SERIAL_8N1, 39, PIN_TELEM_TX);
+  telemSerial->printf("hello debug");
+  crsf_.begin(*crsfserial);
+  ctrl.setup(&motion.getState(), &crsf_);
   ctrl.lowVoltageCutoff_ = 0.0f;
   // ctrl.lowVoltageCutoff_ = LOW_BATTERY_VOLTAGE;
-
-  D_LOG("setting up drivemgr");
-  // driveManager.beginSinglePin(busSerial, 1);
-  driveManager.beginDualPins(busSerial, 2, 1);
-
-  motion.setup(&triOmni, &driveManager, &ctrl);
+  mgr.setup();
+  motion.setup(&triOmni, &mgr, &ctrl);
 }
 
 void loop() {
