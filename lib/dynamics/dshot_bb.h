@@ -1,5 +1,8 @@
 #pragma once
 #include <stdint.h>
+#include <utils.h>
+
+class HardwareSerial;
 
 class DShotBB {
 public:
@@ -18,21 +21,45 @@ public:
     uint8_t addPin(uint8_t pin); //returns channel index to use
 
     // Queue next-frame values per channel; nothing is sent until sendData().
-    void setThrottle(uint8_t channel, uint16_t throttle, bool telemetry = false);
-    void setCmd(uint8_t channel, uint16_t cmd, bool telemetry = false);
+    void setThrottle(uint8_t channel, uint16_t throttle, bool telemetry = true);
+    void setCmd(uint8_t channel, uint16_t cmd, bool telemetry = true);
 
     // Sends one frame on every added pin simultaneously, then resets
     // all channels to motor-stop for the next call.
     void sendData();
 
-private:
-    struct PinReg {
-        uint8_t pin;
+    struct KissPkt {
+        uint8_t temp;
+        float voltage;
+        float current;
+        float mah_used;
+        float rpm;
+
+        static uint8_t calcCrc(uint8_t const* data, uint8_t len);
+        static KissPkt read(uint8_t const* data, uint8_t len);
     };
 
-    PinReg pinRegs_[MAX_CHANNELS] = {};
+    struct Channel {
+        uint8_t pin;
+        uint8_t index;
+        bool bidirectional = false; //if true it uses inverted line logic
+        KissPkt telem;
+        uint32_t lastTelem;
+    };
+
+    Channel const* readTelem(uint32_t now, HardwareSerial*);
+    void resetTelemRead();
+    const Channel& getChannel(uint8_t channel) const { return channels_[channel % MAX_CHANNELS]; }
+    const KissPkt& getTelemetry(uint8_t channel) const { return channels_[channel % MAX_CHANNELS].telem; }
+
+
+private:
+
+    Channel channels_[MAX_CHANNELS] = {};
     uint8_t pinCount_ = 0;
     uint32_t pinMask_ = 0;
+    uint8_t lastKissTelemReq_ = 0xff;
+    CircularArray<uint8_t, 10> telembuf_;
 
     // Packed 12-bit value awaiting send: bits[10:0]=value, bit[11]=telemetry
     uint16_t toSend_[MAX_CHANNELS] = {};
@@ -42,7 +69,7 @@ private:
     uint32_t t1hCycles_ = 0;
     uint32_t bitPeriodCycles_ = 0;
 
-    static uint16_t buildDShotPacket(uint16_t value11, bool telemetry);
+    static uint16_t buildDShotPacket(uint16_t value11, bool telemetry, bool inverted);
 
     inline uint32_t nsToCycles(uint32_t ns) const {
         return (ns * cpuFreqMhz_) / 1000;

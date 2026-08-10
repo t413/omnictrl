@@ -93,7 +93,7 @@ void imuControlTask(void* arg) {
         if ((now - time) > 200)
           continue;
         auto v = drives[i]->getVBus();
-        report += " [#" + String(drives[i]->getId()) + " m" + String((int)state.mode) + " t" + String(state.temperature, 1) + " v" + String(state.velocity, 1) + " p" + String(state.position, 1) + " " + String(v) + "v]";
+        report += " [#" + String(drives[i]->getName()) + " m" + String((int)state.mode) + " v" + String(state.velocity, 1) + " t" + String(state.temperature, 1) + " " + String(v) + "v]";
         if (v > 0.9) { //has a value
           if (vbus < 0.1 && v > 0.1)
             vbus = v; // initialize filtered VBUS

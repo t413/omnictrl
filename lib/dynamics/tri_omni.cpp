@@ -14,7 +14,8 @@ void TriOmni::init() {
   ctx_->addAdjustable(&balanceCtrl_.P, "b.P");
   ctx_->addAdjustable(&balanceCtrl_.I, "b.I");
   ctx_->addAdjustable(&balanceCtrl_.D, "b.D");
-  ctx_->addAdjustable(&balanceCtrl_.rampLimit, "b.Rl");
+  ctx_->addAdjustable(&balanceCtrl_.limit, "b.lim");
+  ctx_->addAdjustable(&balanceCtrl_.rampLimit, "b.rmp");
   ctx_->addAdjustable(&balanceSpeedCtrl_.P, "spd.P");
   ctx_->addAdjustable(&balanceSpeedCtrl_.I, "spd.I");
   ctx_->addAdjustable(&balanceSpeedCtrl_.D, "spd.D");
