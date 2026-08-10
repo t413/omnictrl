@@ -18,7 +18,7 @@ ESC mot_left(GPIO_NUM_6, &mgr, "left");
 ESC mot_back(GPIO_NUM_7, &mgr, "back");
 constexpr auto PIN_TELEM_RX  = GPIO_NUM_8;
 
-#define LOW_BATTERY_VOLTAGE 6.4
+#define LOW_BATTERY_VOLTAGE 14.4f
 
 Controller ctrl(GIT_VERSION);
 MotionTask motion;
@@ -31,9 +31,12 @@ void setup() {
   crsf_.begin(*crsfserial);
   ctrl.setup(&motion.getState(), &crsf_);
   ctrl.lowVoltageCutoff_ = 0.0f;
-  // ctrl.lowVoltageCutoff_ = LOW_BATTERY_VOLTAGE;
+  ctrl.lowVoltageCutoff_ = LOW_BATTERY_VOLTAGE;
   mgr.setup(telemSerial);
   motion.setup(&triOmni, &mgr, &ctrl);
+  triOmni.balanceCtrl_ = PIDCtrl(1.2, 0.0, 0.0, 40);
+  triOmni.balanceSpeedCtrl_ = PIDCtrl(40.0, 0.0, 0.0, 15);
+  triOmni.balanceSpeedCtrl_.tuneScale *= 3.0f;
 }
 
 void loop() {

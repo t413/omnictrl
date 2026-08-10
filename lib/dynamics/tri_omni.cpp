@@ -111,12 +111,12 @@ void TriOmni::iterate(uint32_t now, const SharedState& state, DriveManager&) {
     }
     float torqueCmd = balanceCtrl_.update(now, pitchGoal - pitchFwd); //input is angle
     torqueCmd *= 10.0; //roughly scale to Nm
-    m.fwd = torqueCmd; // Use torque output directly
 
     y = balanceYawCtrl_.update(now, (y + -m.side) - vyaw); //input is speed, output is torque
     m.side = 0; //disable side
-    D_LOG("(fwd %06.2f vfwd%06.2f)-> [-pgoal %06.2f -p %06.2f] vyaw(%06.2f) -> %06.2f m[%d,%d,%d]",
-      m.fwd, vfwd, pitchGoal, pitchFwd, vyaw, y, state.motorStates[0].mode, state.motorStates[1].mode, state.motorStates[2].mode);
+    D_LOG("(fwd %06.2f vfwd%06.2f)-> [-pgoal %06.2f -p %06.2f]->t%06.2f vyaw(%06.2f) -> %06.2f m[%d,%d,%d]",
+      m.fwd, vfwd, pitchGoal, pitchFwd, torqueCmd, vyaw, y, state.motorStates[0].mode, state.motorStates[1].mode, state.motorStates[2].mode);
+    m.fwd = torqueCmd; // Use torque output directly
   } else {
     balanceSpeedCtrl_.reset();
     balanceCtrl_.reset();
