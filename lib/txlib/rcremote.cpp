@@ -318,7 +318,7 @@ void RCRemote::loop() {
   }
   if (M5.BtnPWR.wasClicked()) { //right side button on older targets
     if (armed_) setArmState(false);
-    else powerDown();
+    else if (millis() > 2000) powerDown(); //need at least 2s before allowing shutdown. fixes m5stick-plus2 issue.
   }
   #endif
 
